@@ -1,0 +1,15 @@
+# Swift / SPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Built app bundle (produced by build.sh, installed to /Applications)
+*.app/
+
+# macOS
+.DS_Store
+
+# Editor
+*.xcodeproj/
+*.xcworkspace/
+.vscode/
