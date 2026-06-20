@@ -5,7 +5,9 @@ struct ConnectionSettingsView: View {
     @EnvironmentObject var launcher: RDPLauncher
 
     @State private var password = ""
-    @State private var hasStoredPassword = false
+    @State private var showPassword = false
+    @State private var hasStored = false
+    @State private var justSaved = false
 
     private let resolutions: [(label: String, w: Int, h: Int)] = [
         ("1280 × 720", 1280, 720),
@@ -21,29 +23,52 @@ struct ConnectionSettingsView: View {
                 TextField("Display name", text: $profile.displayName)
                 TextField("Address", text: $profile.address)
                     .textContentType(.URL)
+                Stepper("Port: \(profile.rdpPort)", value: $profile.rdpPort, in: 1...65535)
+            }
+
+            // Username above, password below — entered manually, saved to a local
+            // 0600 file (no Keychain → no system password popups).
+            Section("Credentials") {
+                TextField("Username", text: $profile.rdpUsername)
                 HStack {
-                    TextField("RDP username", text: $profile.rdpUsername)
-                    Stepper("Port \(profile.rdpPort)", value: $profile.rdpPort, in: 1...65535)
-                        .fixedSize()
-                }
-                SecureField("Password", text: $password)
-                HStack(spacing: 12) {
-                    Button("Save to Keychain") {
-                        KeychainService.setPassword(password, account: profile.id)
-                        hasStoredPassword = !password.isEmpty
-                        password = ""
-                    }
-                    .disabled(password.isEmpty)
-                    if hasStoredPassword {
-                        Label("Stored", systemImage: "checkmark.seal.fill")
-                            .foregroundStyle(.green).font(.caption)
-                        Button("Remove") {
-                            KeychainService.deletePassword(account: profile.id)
-                            hasStoredPassword = false
+                    Group {
+                        if showPassword {
+                            TextField("Password", text: $password)
+                        } else {
+                            SecureField("Password", text: $password)
                         }
-                        .font(.caption)
+                    }
+                    Button {
+                        showPassword.toggle()
+                    } label: {
+                        Image(systemName: showPassword ? "eye.slash" : "eye")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(showPassword ? "Hide" : "Show")
+                }
+                HStack(spacing: 12) {
+                    Button("Save") {
+                        CredentialStore.shared.set(password, for: profile.id)
+                        hasStored = CredentialStore.shared.hasPassword(for: profile.id)
+                        justSaved = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    if justSaved {
+                        Label("Saved", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green).font(.caption)
+                    } else if hasStored {
+                        Label("Stored", systemImage: "checkmark.seal.fill")
+                            .foregroundStyle(.secondary).font(.caption)
                     }
                     Spacer()
+                    Button("Clear") {
+                        password = ""
+                        CredentialStore.shared.remove(for: profile.id)
+                        hasStored = false
+                        justSaved = false
+                    }
+                    .font(.caption)
+                    .disabled(password.isEmpty && !hasStored)
                 }
             }
 
@@ -89,15 +114,17 @@ struct ConnectionSettingsView: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .padding(.vertical, 2)
-                Text("Password is fed over stdin — never shown here or in the process list.")
+                Text("Password is read from the local 0600 store and passed to FreeRDP at launch — never shown here.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
         }
         .formStyle(.grouped)
+        .onChange(of: password) { _, _ in justSaved = false }
         .onAppear {
-            hasStoredPassword = KeychainService.hasPassword(account: profile.id)
-            password = ""
+            hasStored = CredentialStore.shared.hasPassword(for: profile.id)
+            password = CredentialStore.shared.password(for: profile.id) ?? ""
+            justSaved = false
         }
     }
 

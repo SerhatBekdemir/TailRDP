@@ -100,7 +100,7 @@ struct HostDetailView: View {
     }
 
     private func connect() {
-        guard KeychainService.hasPassword(account: profile.id) else {
+        guard CredentialStore.shared.hasPassword(for: profile.id) else {
             tab = .connection
             banner = Banner(text: "Set a password in the Connection tab first.", isError: true)
             return

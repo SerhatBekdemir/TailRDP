@@ -56,7 +56,7 @@ final class RDPLauncher: ObservableObject {
     /// Human-readable command for the UI preview, with the password masked.
     func previewCommand(for profile: HostProfile) -> String {
         let bin = (binaryPath as NSString?)?.lastPathComponent ?? "sdl-freerdp"
-        let masked = KeychainService.hasPassword(account: profile.id) ? "••••••" : nil
+        let masked = CredentialStore.shared.hasPassword(for: profile.id) ? "••••••" : nil
         return ([bin] + buildArguments(for: profile, password: masked)).joined(separator: " ")
     }
 
@@ -67,7 +67,7 @@ final class RDPLauncher: ObservableObject {
         }
         guard !profile.address.isEmpty else { return "No address set for this machine" }
 
-        let password = KeychainService.password(account: profile.id) ?? ""
+        let password = CredentialStore.shared.password(for: profile.id) ?? ""
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bin)

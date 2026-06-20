@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build TailRPD SwiftUI executable and assemble a double-clickable .app bundle.
+# Build TailRDP SwiftUI executable and assemble a double-clickable .app bundle.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP="TailRPD"
+APP="TailRDP"
 BUNDLE_ID="com.aegis.rdp"
 VERSION="1.0.0"
 CONFIG="${1:-release}"

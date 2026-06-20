@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "TailRPD",
+    name: "TailRDP",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
-            name: "TailRPD",
-            path: "Sources/TailRPD"
+            name: "TailRDP",
+            path: "Sources/TailRDP"
         )
     ]
 )

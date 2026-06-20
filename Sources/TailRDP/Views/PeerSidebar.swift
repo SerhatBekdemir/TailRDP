@@ -17,6 +17,12 @@ struct PeerSidebar: View {
         .listStyle(.sidebar)
         .toolbar {
             ToolbarItem {
+                SettingsLink {
+                    Image(systemName: "gearshape")
+                }
+                .help("Tailscale settings (⌘,)")
+            }
+            ToolbarItem {
                 Button {
                     tailscale.refresh()
                 } label: {

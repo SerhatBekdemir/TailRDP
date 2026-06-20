@@ -11,7 +11,7 @@ final class ProfileStore: ObservableObject {
     init() {
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("TailRPD", isDirectory: true)
+            .appendingPathComponent("TailRDP", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         url = base.appendingPathComponent("profiles.json")
         load()
@@ -44,7 +44,7 @@ final class ProfileStore: ObservableObject {
 
     func remove(id: String) {
         profiles.removeAll { $0.id == id }
-        KeychainService.deletePassword(account: id)
+        CredentialStore.shared.remove(for: id)
         save()
     }
 

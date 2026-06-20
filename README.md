@@ -1,4 +1,4 @@
-# TailRPD
+# TailRDP
 
 Native macOS (SwiftUI) RDP client for a Tailscale network. Discover a tailnet
 machine, tune its connection settings, connect, and transfer files — all from
@@ -21,7 +21,7 @@ one app. A thin, reliable wrapper around FreeRDP + SSH/SCP.
 ## Build
 
 ```sh
-./build.sh            # swift build → assemble TailRPD.app → ad-hoc sign → install to /Applications
+./build.sh            # swift build → assemble TailRDP.app → ad-hoc sign → install to /Applications
 ```
 
 Requires the Swift toolchain, plus `freerdp` and `tailscale` installed
@@ -30,7 +30,7 @@ Requires the Swift toolchain, plus `freerdp` and `tailscale` installed
 ## Architecture
 
 ```
-Sources/TailRPD/
+Sources/TailRDP/
   Models/    RDPSettings, TailscalePeer, HostProfile
   Services/  ProcessRunner, KeychainService, TailscaleService,
              RDPLauncher, SFTPService, ProfileStore, AppError
@@ -38,7 +38,7 @@ Sources/TailRPD/
              ConnectionSettingsView, FileTransferView
 ```
 
-- Profiles persist to `~/Library/Application Support/TailRPD/profiles.json`.
+- Profiles persist to `~/Library/Application Support/TailRDP/profiles.json`.
 - Passwords: Keychain service `com.aegis.rdp`, account = lowercased hostname.
 
 ## Notes

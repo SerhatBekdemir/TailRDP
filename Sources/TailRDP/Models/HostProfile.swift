@@ -1,9 +1,9 @@
 import Foundation
 
 /// A saved, editable connection profile. The password is NOT stored here —
-/// it lives in the macOS Keychain, keyed by `id`.
+/// it lives in the local 0600 CredentialStore, keyed by `id`.
 struct HostProfile: Codable, Identifiable, Equatable {
-    var id: String          // stable key = lowercased hostname (Keychain account too)
+    var id: String          // stable key = lowercased hostname (credential account too)
     var hostName: String
     var displayName: String
     var address: String     // tailscale IPv4 (or a manually entered host)
@@ -16,15 +16,16 @@ struct HostProfile: Codable, Identifiable, Equatable {
     var lastRemoteDir: String
 
     static func make(from peer: TailscalePeer) -> HostProfile {
-        HostProfile(
+        let user = UserDefaults.standard.defaultUsername
+        return HostProfile(
             id: peer.id,
             hostName: peer.hostName,
             displayName: peer.hostName,
             address: peer.ipv4,
             os: peer.os,
             online: peer.online,
-            rdpUsername: "aegis",
-            sshUsername: "aegis",
+            rdpUsername: user,
+            sshUsername: user,
             rdpPort: 3389,
             settings: .default,
             lastRemoteDir: ""

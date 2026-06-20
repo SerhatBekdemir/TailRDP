@@ -16,8 +16,17 @@ final class TailscaleService: ObservableObject {
         "/usr/bin/tailscale"
     ]
 
-    var binaryPath: String? {
+    /// Auto-detected path (first existing candidate), for display in Settings.
+    var detectedPath: String? {
         Self.binaryCandidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    /// Effective path: a non-empty, executable override from Settings wins;
+    /// otherwise the auto-detected candidate.
+    var binaryPath: String? {
+        let override = UserDefaults.standard.string(forKey: AppSettingsKey.tailscaleBinaryPath) ?? ""
+        if !override.isEmpty, FileManager.default.isExecutableFile(atPath: override) { return override }
+        return detectedPath
     }
 
     func refresh() {

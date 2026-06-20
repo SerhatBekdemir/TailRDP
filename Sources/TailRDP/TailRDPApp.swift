@@ -1,13 +1,13 @@
 import SwiftUI
 
 @main
-struct TailRPDApp: App {
+struct TailRDPApp: App {
     @StateObject private var store = ProfileStore()
     @StateObject private var tailscale = TailscaleService()
     @StateObject private var launcher = RDPLauncher()
 
     var body: some Scene {
-        WindowGroup("TailRPD") {
+        WindowGroup("TailRDP") {
             ContentView()
                 .environmentObject(store)
                 .environmentObject(tailscale)
@@ -22,6 +22,11 @@ struct TailRPDApp: App {
                 Button("Refresh Tailnet") { tailscale.refresh() }
                     .keyboardShortcut("r", modifiers: .command)
             }
+        }
+
+        Settings {
+            TailscaleSettingsView()
+                .environmentObject(tailscale)
         }
     }
 }
