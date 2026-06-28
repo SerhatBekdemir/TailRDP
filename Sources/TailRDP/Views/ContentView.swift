@@ -32,6 +32,18 @@ struct ContentView: View {
         }
         .onChange(of: launcher.sessionEndNotice) { _, notice in
             guard let notice else { return }
+            // Show the correct banner right away — don't leave the green connect ack
+            // sitting on top until the Linux SSH check finishes (~1 s later).
+            if !notice.userInitiated, notice.endKind != .loggedOut {
+                store.applySessionOutcome(
+                    profileID: notice.profileID,
+                    outcome: SessionEndOutcome(
+                        message: notice.message,
+                        kind: notice.endKind,
+                        actionLabel: notice.endKind == .crashed ? "Reconnect" : "Resume"
+                    )
+                )
+            }
             Task {
                 let outcome = await SessionCoordinator.handleSessionEnd(
                     notice: notice,

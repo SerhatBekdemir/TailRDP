@@ -5,6 +5,8 @@ import Combine
 @MainActor
 final class ProfileStore: ObservableObject {
     @Published var profiles: [HostProfile] = []
+    /// Short-lived green banner for clean disconnect — not sticky across host switches.
+    @Published var ephemeralBanner: EphemeralBanner?
 
     private let url: URL
 
@@ -42,6 +44,20 @@ final class ProfileStore: ObservableObject {
     func applySessionOutcome(profileID: String, outcome: SessionEndOutcome) {
         update(id: profileID) { p in
             p.stickyBanner = HostStatusBanner.from(outcome)
+        }
+        switch outcome.kind {
+        case .loggedOut:
+            ephemeralBanner = EphemeralBanner(hostID: profileID, text: "Disconnected.")
+        case .paused, .crashed:
+            if ephemeralBanner?.hostID == profileID {
+                ephemeralBanner = nil
+            }
+        }
+    }
+
+    func clearEphemeralBanner(hostID: String) {
+        if ephemeralBanner?.hostID == hostID {
+            ephemeralBanner = nil
         }
     }
 

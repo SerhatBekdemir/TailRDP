@@ -1,7 +1,7 @@
 import Foundation
 
 /// How an RDP session ended — drives banner style and whether recovery runs.
-enum SessionEndKind: String, Codable, Equatable {
+public enum SessionEndKind: String, Codable, Equatable {
     /// Window closed or remote "close screen"; session still alive on host.
     case paused
     /// TailRDP Disconnect or remote Log out; session finished.
@@ -11,18 +11,25 @@ enum SessionEndKind: String, Codable, Equatable {
 }
 
 /// Sticky status shown when returning to a host (pause / crash — not clean disconnect).
-struct HostStatusBanner: Codable, Equatable {
-    enum Style: String, Codable {
+public struct HostStatusBanner: Codable, Equatable {
+    public enum Style: String, Codable {
         case paused
         case error
     }
 
-    var text: String
-    var detail: String?
-    var style: Style
-    var actionLabel: String?
+    public var text: String
+    public var detail: String?
+    public var style: Style
+    public var actionLabel: String?
 
-    static func from(_ outcome: SessionEndOutcome) -> HostStatusBanner? {
+    public init(text: String, detail: String?, style: Style, actionLabel: String?) {
+        self.text = text
+        self.detail = detail
+        self.style = style
+        self.actionLabel = actionLabel
+    }
+
+    public static func from(_ outcome: SessionEndOutcome) -> HostStatusBanner? {
         switch outcome.kind {
         case .loggedOut:
             return nil
@@ -45,20 +52,32 @@ struct HostStatusBanner: Codable, Equatable {
 }
 
 /// UI + state result after a session ends.
-struct SessionEndOutcome: Equatable {
-    var message: String
-    var kind: SessionEndKind
-    var fixSummary: String?
-    /// Button label when the user may connect again ("Resume" / "Reconnect").
-    var actionLabel: String?
+public struct SessionEndOutcome: Equatable {
+    public var message: String
+    public var kind: SessionEndKind
+    public var fixSummary: String?
+    public var actionLabel: String?
 
-    var isError: Bool { kind == .crashed }
+    public init(message: String, kind: SessionEndKind, fixSummary: String? = nil, actionLabel: String? = nil) {
+        self.message = message
+        self.kind = kind
+        self.fixSummary = fixSummary
+        self.actionLabel = actionLabel
+    }
+
+    public var isError: Bool { kind == .crashed }
 }
 
 /// Snapshot of RDP settings that last produced a usable session.
 struct LastWorkingSnapshot: Codable, Equatable {
     var settings: RDPSettings
     var savedAt: Date
+}
+
+/// Short-lived green status for clean disconnect — not persisted on the profile.
+struct EphemeralBanner: Equatable {
+    var hostID: String
+    var text: String
 }
 
 /// Per-host connect reliability — drives crash recovery only.

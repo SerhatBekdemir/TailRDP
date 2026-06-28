@@ -1,23 +1,29 @@
 import Foundation
 
 /// Remote Linux session state and recent errors, discovered over SSH.
-struct RemoteSessionReport: Equatable {
-    var layoutSummary: String
-    var remoteSessionIDs: [String]
-    var recentErrors: [String]
+public struct RemoteSessionReport: Equatable {
+    public var layoutSummary: String
+    public var remoteSessionIDs: [String]
+    public var recentErrors: [String]
 
-    var hasErrors: Bool { !recentErrors.isEmpty }
+    public init(layoutSummary: String, remoteSessionIDs: [String], recentErrors: [String]) {
+        self.layoutSummary = layoutSummary
+        self.remoteSessionIDs = remoteSessionIDs
+        self.recentErrors = recentErrors
+    }
+
+    public var hasErrors: Bool { !recentErrors.isEmpty }
 }
 
 /// Recovery actions chosen from remote journal + RDP error codes — applied automatically.
-enum RecoveryPreset: Equatable {
+public enum RecoveryPreset: Equatable {
     case none
     case endStuckSessions
     case resetRemoteDesktop
     case useSafeClientSettings
 }
 
-enum RemoteDisplayRecovery {
+public enum RemoteDisplayRecovery {
     static func inspect(_ profile: HostProfile) -> Result<RemoteSessionReport, AppError> {
         guard profile.os == "linux" else {
             return .success(RemoteSessionReport(layoutSummary: "Not a Linux host", remoteSessionIDs: [], recentErrors: []))
@@ -32,7 +38,7 @@ enum RemoteDisplayRecovery {
         return runReportScript(profile, sinceMinutes: 5)
     }
 
-    static func chooseRecovery(errInfo: String?, report: RemoteSessionReport?, failureCount: Int) -> RecoveryPreset {
+    public static func chooseRecovery(errInfo: String?, report: RemoteSessionReport?, failureCount: Int) -> RecoveryPreset {
         if let errInfo, isBenignDisconnect(errInfo) { return .none }
 
         let errors = (report?.recentErrors ?? []).joined(separator: "\n")
@@ -67,7 +73,7 @@ enum RemoteDisplayRecovery {
         }
     }
 
-    static func looksLikeRecentCrash(_ report: RemoteSessionReport) -> Bool {
+    public static func looksLikeRecentCrash(_ report: RemoteSessionReport) -> Bool {
         let combined = report.recentErrors.joined(separator: "\n").lowercased()
         return combined.contains("segv")
             || combined.contains("core dumped")

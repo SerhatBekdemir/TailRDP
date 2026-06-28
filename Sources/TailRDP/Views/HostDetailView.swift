@@ -15,7 +15,7 @@ struct HostDetailView: View {
     private struct TransientBanner: Identifiable {
         let id = UUID()
         let text: String
-        let isError: Bool
+        let style: BannerStyle
     }
 
     @State private var tab: Tab = .connection
@@ -37,6 +37,24 @@ struct HostDetailView: View {
             content
         }
         .onChange(of: profile) { _, _ in store.save() }
+        .onChange(of: store.ephemeralBanner) { _, flash in
+            guard let flash, flash.hostID == profile.id else { return }
+            transientBanner = TransientBanner(text: flash.text, style: .success)
+            store.clearEphemeralBanner(hostID: profile.id)
+        }
+        .onAppear {
+            if let flash = store.ephemeralBanner, flash.hostID == profile.id {
+                transientBanner = TransientBanner(text: flash.text, style: .success)
+                store.clearEphemeralBanner(hostID: profile.id)
+            }
+        }
+        .onChange(of: launcher.sessionEndNotice) { _, notice in
+            guard notice?.profileID == profile.id else { return }
+            transientBanner = nil
+        }
+        .onChange(of: profile.stickyBanner) { _, sticky in
+            if sticky != nil { transientBanner = nil }
+        }
         .safeAreaInset(edge: .bottom) { bannerView }
     }
 
@@ -110,21 +128,21 @@ struct HostDetailView: View {
     }
 
     @ViewBuilder private var bannerView: some View {
-        if let transient = transientBanner {
-            bannerContent(
-                text: transient.text,
-                detail: nil,
-                style: transient.isError ? .error : .success,
-                actionLabel: nil,
-                onDismiss: { transientBanner = nil }
-            )
-        } else if let sticky = profile.stickyBanner {
+        if let sticky = profile.stickyBanner {
             bannerContent(
                 text: sticky.text,
                 detail: sticky.detail,
                 style: sticky.style,
                 actionLabel: sticky.actionLabel,
                 onDismiss: { store.clearStickyBanner(profileID: profile.id) }
+            )
+        } else if let transient = transientBanner {
+            bannerContent(
+                text: transient.text,
+                detail: nil,
+                style: transient.style,
+                actionLabel: nil,
+                onDismiss: { transientBanner = nil }
             )
         }
     }
@@ -209,10 +227,11 @@ struct HostDetailView: View {
             tab = .connection
             transientBanner = TransientBanner(
                 text: "Set a password in the Connection tab first.",
-                isError: true
+                style: .error
             )
             return
         }
+        let resuming = profile.stickyBanner?.style == .paused
         transientBanner = nil
         isConnecting = true
         Task {
@@ -220,16 +239,20 @@ struct HostDetailView: View {
             let result = await SessionCoordinator.connect(
                 profileID: profile.id,
                 store: store,
-                launcher: launcher
+                launcher: launcher,
+                resumingPaused: resuming
             )
             if let updated = store.profile(id: profile.id) {
                 profile = updated
             }
             if result.isError {
-                transientBanner = TransientBanner(text: result.message, isError: true)
+                transientBanner = TransientBanner(text: result.message, style: .error)
             } else {
                 store.clearStickyBanner(profileID: profile.id)
-                transientBanner = TransientBanner(text: result.message, isError: false)
+                transientBanner = TransientBanner(
+                    text: resuming ? "Resuming your paused session…" : result.message,
+                    style: resuming ? .paused : .success
+                )
             }
         }
     }

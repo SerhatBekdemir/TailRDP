@@ -46,6 +46,10 @@ $ICON_PLIST
 </plist>
 PLIST
 
+echo "==> session logic verify"
+"$BIN" --verify-session
+[ $? -eq 0 ] || exit 1
+
 echo "==> ad-hoc signing"
 codesign --force --deep --sign - "$BUNDLE" 2>/dev/null || echo "(codesign skipped)"
 

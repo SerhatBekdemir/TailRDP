@@ -106,7 +106,7 @@ final class RDPLauncher: ObservableObject {
                 let started = self?.sessionStartedAt[profile.id] ?? Date()
                 let duration = Date().timeIntervalSince(started)
                 let loggedOut = self?.userDisconnects.remove(profile.id) != nil
-                let end = Self.classifySessionEnd(
+                let end = SessionEndClassifier.classify(
                     loggedOut: loggedOut,
                     stderr: stderrText,
                     exitCode: finished.terminationStatus,
@@ -147,94 +147,5 @@ final class RDPLauncher: ObservableObject {
         if sessionEndNotice?.profileID == profileID {
             sessionEndNotice = nil
         }
-    }
-
-    private struct SessionEndClassification {
-        let kind: SessionEndKind
-        let message: String
-        let errInfoCode: String?
-    }
-
-    private static func classifySessionEnd(
-        loggedOut: Bool,
-        stderr: String,
-        exitCode: Int32,
-        reason: String
-    ) -> SessionEndClassification {
-        if loggedOut {
-            return SessionEndClassification(kind: .loggedOut, message: "Disconnected.", errInfoCode: nil)
-        }
-        let errInfo = firstMatch(in: stderr, pattern: #"ERRINFO_[A-Z0-9_]+"#)
-        if let errInfo {
-            if errInfo == "ERRINFO_LOGOFF_BY_USER" {
-                return SessionEndClassification(
-                    kind: .paused,
-                    message: "Session paused. Your work is still running — connect again to resume.",
-                    errInfoCode: errInfo
-                )
-            }
-            if errInfo == "ERRINFO_DISCONNECTED_BY_OTHER_CONNECTION" {
-                return SessionEndClassification(
-                    kind: .paused,
-                    message: "Session paused. Another client took over — connect again to resume.",
-                    errInfoCode: errInfo
-                )
-            }
-            return SessionEndClassification(kind: .crashed, message: rdpErrorLabel(errInfo), errInfoCode: errInfo)
-        }
-        if isClientWindowClosed(exitCode: exitCode, reason: reason, stderr: stderr) {
-            return SessionEndClassification(
-                kind: .paused,
-                message: "Session paused. Connect again to resume.",
-                errInfoCode: nil
-            )
-        }
-        if reason == "signal" {
-            return SessionEndClassification(
-                kind: .crashed,
-                message: "Connection interrupted unexpectedly.",
-                errInfoCode: nil
-            )
-        }
-        if exitCode != 0 {
-            return SessionEndClassification(
-                kind: .crashed,
-                message: "Connection ended unexpectedly (code \(exitCode)).",
-                errInfoCode: nil
-            )
-        }
-        return SessionEndClassification(
-            kind: .paused,
-            message: "Session paused. Connect again to resume.",
-            errInfoCode: nil
-        )
-    }
-
-    /// macOS window close (red button) often exits with 128+signal and no RDP error in stderr.
-    private static func isClientWindowClosed(exitCode: Int32, reason: String, stderr: String) -> Bool {
-        // 128 + SIGINT(2), SIGQUIT(3), SIGTERM(15) — typical when closing an SDL window.
-        let windowCloseCodes: Set<Int32> = [130, 131, 143, 2, 3, 15]
-        if windowCloseCodes.contains(exitCode) { return true }
-        if reason == "signal", exitCode == 0 || windowCloseCodes.contains(exitCode) { return true }
-        // Clean window close with no protocol error in stderr.
-        if exitCode != 0, stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
-        return false
-    }
-
-    private static func rdpErrorLabel(_ code: String) -> String {
-        switch code {
-        case "ERRINFO_LOGOFF_BY_USER": return "The remote desktop closed the session."
-        case "ERRINFO_SERVER_SHUTDOWN": return "The remote computer shut down."
-        case "ERRINFO_DISCONNECTED_BY_OTHER_CONNECTION": return "Another connection took over this session."
-        default: return "The remote session ended (\(code))."
-        }
-    }
-
-    private static func firstMatch(in text: String, pattern: String) -> String? {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-        let range = NSRange(text.startIndex..., in: text)
-        guard let match = regex.firstMatch(in: text, range: range),
-              let swiftRange = Range(match.range, in: text) else { return nil }
-        return String(text[swiftRange])
     }
 }

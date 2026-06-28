@@ -8,7 +8,8 @@ enum SessionCoordinator {
     static func connect(
         profileID: String,
         store: ProfileStore,
-        launcher: RDPLauncher
+        launcher: RDPLauncher,
+        resumingPaused: Bool = false
     ) async -> (message: String, isError: Bool) {
         guard let base = store.profile(id: profileID) else {
             return ("Host not found.", true)
@@ -16,6 +17,12 @@ enum SessionCoordinator {
 
         var statusParts: [String] = []
         let useFallback = base.health.usingSafeFallback || base.health.consecutiveFailures >= 2
+
+        // Gnome Remote Desktop can hang if the client reconnects before the prior
+        // RDP socket is fully torn down — give Linux hosts a moment after pause.
+        if resumingPaused, base.os == "linux" {
+            try? await Task.sleep(for: .seconds(2))
+        }
 
         // Only heal before connect after a prior crash — never after pause or logout.
         if base.os == "linux",
@@ -28,7 +35,9 @@ enum SessionCoordinator {
         }
 
         let launchProfile = profileForLaunch(base)
-        if useFallback {
+        if resumingPaused {
+            statusParts.append("Resuming paused session")
+        } else if useFallback {
             statusParts.append("Connecting with safe fallback (\(RDPSettings.safeFallback.connectSummary))")
         } else if let last = base.lastWorking {
             statusParts.append("Connecting with last good settings (\(last.settings.connectSummary))")

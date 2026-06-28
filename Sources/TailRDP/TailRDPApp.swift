@@ -6,6 +6,13 @@ struct TailRDPApp: App {
     @StateObject private var tailscale = TailscaleService()
     @StateObject private var launcher = RDPLauncher()
 
+    init() {
+        if CommandLine.arguments.contains("--verify-session") {
+            let failures = SessionEndClassifier.runBuiltInChecks()
+            exit(failures == 0 ? 0 : 1)
+        }
+    }
+
     var body: some Scene {
         WindowGroup("TailRDP") {
             ContentView()
