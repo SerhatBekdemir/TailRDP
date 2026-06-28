@@ -1,7 +1,6 @@
 import Foundation
 import Combine
 
-/// Builds the sdl-freerdp argv from a profile and launches it with the saved password.
 struct SessionEndNotice: Equatable {
     let profileID: String
     let message: String
@@ -55,12 +54,13 @@ final class RDPLauncher: ObservableObject {
             "/gfx:\(s.codec.flag)",
             "/bpp:\(s.bpp)"
         ]
-        if s.dynamicResolution {
+        if s.fullscreen {
+            appendFullscreenArguments(to: &a, settings: s)
+        } else if s.dynamicResolution {
             a.append("/dynamic-resolution")
         } else {
             a.append("/size:\(s.width)x\(s.height)")
         }
-        if s.fullscreen { a.append("/f") }
         if s.multiMonitor { a.append("/multimon") }
         a.append(s.clipboard ? "+clipboard" : "-clipboard")
         if s.sound { a.append("/sound") }
@@ -68,6 +68,17 @@ final class RDPLauncher: ObservableObject {
         // Gnome Remote Desktop: auto-reconnect causes black-screen stalls after pause.
         if s.autoReconnect, profile.os != "linux" { a.append("+auto-reconnect") }
         return a
+    }
+
+    /// macOS: normal window at chosen resolution; use the window's green button for native fullscreen.
+    private func appendFullscreenArguments(to args: inout [String], settings: RDPSettings) {
+        args.append("/size:\(settings.width)x\(settings.height)")
+        #if os(macOS)
+        args.append("+dynamic-resolution")
+        args.append("/floatbar:sticky:on,default:visible,show:fullscreen")
+        #else
+        args.append("/f")
+        #endif
     }
 
     func previewCommand(for profile: HostProfile) -> String {

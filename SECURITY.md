@@ -8,7 +8,7 @@ TailRDP security model for a **personal / small-team tailnet RDP client**. This 
 
 | Asset | Protection |
 |-------|------------|
-| RDP passwords | macOS Keychain (`app.tailrdp`), `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; passed via `/p:` argv at launch |
+| RDP passwords | `~/Library/Application Support/TailRDP/credentials.json` (mode 0600); passed via `/p:` argv at launch |
 | Usernames | Plain JSON in Application Support |
 | RDP traffic | Tailscale wire + optional NLA; **server cert not verified** (`/cert:ignore`) |
 | SSH recovery | Your SSH keys; `BatchMode=yes`, `StrictHostKeyChecking=accept-new` |
@@ -18,12 +18,14 @@ TailRDP security model for a **personal / small-team tailnet RDP client**. This 
 
 ## Credentials
 
-### Keychain
+### Local password file
 
-- **Service:** `app.tailrdp`
-- **Account:** profile `id` (lowercased hostname or manual name)
-- **Accessibility:** `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` — available after first unlock; not synced to other devices
+- **Path:** `~/Library/Application Support/TailRDP/credentials.json`
+- **Format:** JSON map of profile `id` → password
+- **Permissions:** written as mode `0600` (user read/write only)
 - **Not in:** profile export JSON
+
+TailRDP does **not** use the macOS Keychain for RDP passwords. This avoids the system “login keychain password” dialog that appears when the app is ad-hoc signed or rebuilt. Passwords are still only entered through TailRDP’s own sign-in UI.
 
 ### FreeRDP password delivery
 
@@ -31,9 +33,9 @@ Passwords are passed to FreeRDP as `/p:password` in the process argv at launch (
 
 **In memory:** passwords exist briefly as Swift `String` during launch.
 
-### Legacy migration
+### Legacy Keychain migration
 
-One-time import from `~/Library/Application Support/TailRDP/credentials.json` into Keychain, then the JSON file is deleted.
+On first launch after this change, TailRDP silently imports any existing Keychain items for service `app.tailrdp` (without showing the system dialog) and deletes them. If import fails, re-enter sign-in once in the app.
 
 ### Profile export
 
@@ -96,11 +98,11 @@ Executed as: `ssh user@host '<script>'`.
 
 | Path | Contents | Sensitivity |
 |------|----------|-------------|
+| `~/Library/Application Support/TailRDP/credentials.json` | RDP passwords | High |
 | `~/Library/Application Support/TailRDP/profiles.json` | Hosts, settings, banner state | Medium (usernames, addresses) |
-| Keychain | Passwords | High |
 | OSLog | Redacted argv; stderr tails | Low–medium |
 
-Protect Mac login and FileVault like any machine storing Keychain secrets.
+Protect your Mac login and FileVault like any machine storing local credentials.
 
 ---
 
@@ -109,12 +111,12 @@ Protect Mac login and FileVault like any machine storing Keychain secrets.
 ### In scope (designed for)
 
 - Single user on a trusted Mac connecting to **their own** tailnet machines
-- Casual protection against password exposure in shell history and casual disk reads (passwords are not written to profiles.json)
+- Casual protection via file permissions and keeping passwords out of profile export JSON
 - Reasonable Linux session recovery without manual SSH for common GNOME RDP issues
 
 ### Out of scope (not guaranteed)
 
-- Protection against malware on the Mac with Keychain access while unlocked
+- Protection against malware on the Mac with access to your user account
 - Protection against compromised tailnet peer impersonation without cert verification
 - Secure multi-user or shared-machine deployment
 - Audited remote execution on hostile servers

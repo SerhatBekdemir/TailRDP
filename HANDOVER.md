@@ -47,7 +47,7 @@ flowchart TB
 | `SessionEndClassifier` | Pure classify: pause / logout / crash from exit code + stderr |
 | `RemoteDisplayRecovery` | SSH recovery presets, tri-state remote session |
 | `RemoteScriptLoader` | Load bundled scripts with SHA256 pins |
-| `CredentialStore` | Keychain `app.tailrdp`, legacy JSON one-time migrate |
+| `CredentialStore` | `credentials.json` (0600); one-time Keychain import |
 | `AppLog` | OSLog subsystem `app.tailrdp` |
 
 **Design principle:** pure logic (`SessionEndClassifier`, `chooseRecovery`) is testable without I/O. Blocking work (`ProcessRunner`, SSH) runs in `Task.detached`. UI state on `@MainActor`.
@@ -128,8 +128,8 @@ When resuming Linux with `remoteSessionIDs.count > 1`, `HostDetailView` shows `R
 | Item | Storage |
 |------|---------|
 | Profiles | `~/Library/Application Support/TailRDP/profiles.json` |
-| Passwords | Keychain generic password, service `app.tailrdp`, account = profile `id`, accessibility **WhenUnlocked** |
-| Legacy passwords | One-time migrate from `credentials.json` → Keychain, then delete file |
+| Passwords | `~/Library/Application Support/TailRDP/credentials.json` (mode 0600), keyed by profile `id` |
+| Legacy passwords | One-time migrate from Keychain service `app.tailrdp` → file, then delete Keychain items |
 | Flash banners | In-memory only (`ProfileStore.flashBanners`) |
 | Sticky banners | Persisted on `HostProfile.stickyBanner` |
 | Session health | `HostProfile.sessionHealth` (failures, last end kind, resume delay ms) |
@@ -137,7 +137,7 @@ When resuming Linux with `remoteSessionIDs.count > 1`, `HostDetailView` shows `R
 
 ### Profile id convention
 
-Lowercased hostname for tailnet peers, or lowercased display name for manual hosts. Must match Keychain account name.
+Lowercased hostname for tailnet peers, or lowercased display name for manual hosts. Must match `credentials.json` key.
 
 ### Export format (`ProfileExportBundle`)
 
@@ -254,10 +254,13 @@ Full commit list: [CHANGELOG.md](CHANGELOG.md).
 swift build
 swift test                    # full Xcode required
 swift run TailRDP --verify-session
+swift run TailRDP --qa-integration xps   # optional live tailnet smoke
 ./build.sh                    # release + verify gate
 ```
 
 `--verify-session` runs `SessionEndClassifier.runBuiltInChecks()`: classifier cases, banner mapping, recovery logic, script SHA256 pins. Exit 0/1 for CI.
+
+`--qa-integration <match>` runs live checks against a profile (Tailscale, SSH/SFTP, RDP connect/disconnect, pause cycle). Does not print passwords.
 
 ---
 
@@ -283,7 +286,7 @@ Not implemented; documented for planning:
 
 ## Known limits
 
-- Passwords Keychain-bound to Mac + bundle ID.
+- Passwords stored in Application Support on this Mac (not portable via export).
 - SSH optional — RDP-only path supported.
 - All tailnet OS types listed; user configures RDP where a server exists.
 - Unsigned app — user trust on first launch.

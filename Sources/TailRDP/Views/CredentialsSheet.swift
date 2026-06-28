@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// One-time (or on-demand) username + password entry for a host. Saved to Keychain on confirm.
+/// One-time (or on-demand) username + password entry for a host.
 struct CredentialsSheet: View {
     let hostName: String
     let message: String?

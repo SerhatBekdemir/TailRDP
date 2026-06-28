@@ -11,12 +11,12 @@ struct ConnectionSettingsView: View {
     @State private var isAdvancedBusy = false
     @State private var showAdvanced = false
 
-    private let resolutions: [(label: String, w: Int, h: Int)] = [
-        ("1280 × 720", 1280, 720),
-        ("1600 × 900", 1600, 900),
-        ("1920 × 1080", 1920, 1080),
-        ("2560 × 1440", 2560, 1440),
-        ("3840 × 2160", 3840, 2160)
+    private let resolutions: [(label: String, w: Int, h: Int, recommended: Bool)] = [
+        ("1280 × 720", 1280, 720, false),
+        ("1600 × 900", 1600, 900, false),
+        ("1920 × 1080", 1920, 1080, true),
+        ("2560 × 1440", 2560, 1440, false),
+        ("3840 × 2160", 3840, 2160, false)
     ]
 
     var body: some View {
@@ -71,29 +71,52 @@ struct ConnectionSettingsView: View {
                 Text("Connect settings")
             }
 
-            Section("Display") {
-                Toggle("Dynamic resolution (follow window)", isOn: $profile.settings.dynamicResolution)
-                if !profile.settings.dynamicResolution {
-                    Picker("Resolution", selection: resolutionBinding) {
-                        ForEach(resolutions, id: \.label) { Text($0.label).tag($0.label) }
+            Section {
+                Picker("Display mode", selection: displayModeBinding) {
+                    ForEach(RDPDisplayMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
                     }
-                    Toggle("Fullscreen", isOn: $profile.settings.fullscreen)
+                }
+                Text(profile.settings.displayMode.helpText(macOS: isMacOS))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                if profile.settings.displayMode != .resizable {
+                    Picker("Resolution", selection: resolutionBinding) {
+                        ForEach(resolutions, id: \.label) { res in
+                            Text(res.recommended ? "\(res.label) — recommended" : res.label).tag(res.label)
+                        }
+                        if !isKnownResolution {
+                            Text(customResolutionLabel).tag(customResolutionLabel)
+                        }
+                    }
+                }
+
+                if profile.settings.displayMode == .window {
                     Toggle("Span multiple monitors", isOn: $profile.settings.multiMonitor)
                 }
+
                 Picker("Color depth", selection: $profile.settings.bpp) {
                     Text("32-bit").tag(32)
                     Text("24-bit").tag(24)
                     Text("16-bit").tag(16)
                 }
+            } header: {
+                Text("Display")
             }
 
-            Section("Performance") {
+            Section {
                 Picker("Codec", selection: $profile.settings.codec) {
                     ForEach(GFXCodec.allCases) { Text($0.label).tag($0) }
                 }
                 Picker("Network profile", selection: $profile.settings.network) {
                     ForEach(NetworkType.allCases) { Text($0.label).tag($0) }
                 }
+                Text("AVC420 is the best default over Tailscale. Use AVC444 if you have bandwidth to spare.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Performance")
             }
 
             Section("Behavior") {
@@ -140,8 +163,19 @@ struct ConnectionSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { refreshStoredState() }
+        .onAppear {
+            profile.settings.normalizeDisplayOptions()
+            refreshStoredState()
+        }
         .onChange(of: profile.id) { _, _ in refreshStoredState() }
+    }
+
+    private var isMacOS: Bool {
+        #if os(macOS)
+        return true
+        #else
+        return false
+        #endif
     }
 
     private func refreshStoredState() {
@@ -152,11 +186,28 @@ struct ConnectionSettingsView: View {
         profile.lastWorking?.settings == profile.settings
     }
 
+    private var displayModeBinding: Binding<RDPDisplayMode> {
+        Binding(
+            get: { profile.settings.displayMode },
+            set: { mode in
+                profile.settings.apply(displayMode: mode)
+            }
+        )
+    }
+
+    private var isKnownResolution: Bool {
+        resolutions.contains { $0.w == profile.settings.width && $0.h == profile.settings.height }
+    }
+
+    private var customResolutionLabel: String {
+        "\(profile.settings.width) × \(profile.settings.height)"
+    }
+
     private var resolutionBinding: Binding<String> {
         Binding(
             get: {
                 resolutions.first { $0.w == profile.settings.width && $0.h == profile.settings.height }?.label
-                    ?? "1920 × 1080"
+                    ?? customResolutionLabel
             },
             set: { label in
                 if let r = resolutions.first(where: { $0.label == label }) {

@@ -120,7 +120,7 @@ Runs on `macos-15` with Xcode selected. Local development does not require pushi
 
 ### Identifiers
 
-- Bundle ID / Keychain service: `app.tailrdp`
+- Bundle ID / credential service name: `app.tailrdp`
 - Profile id: lowercased hostname or manual display name
 
 ### Adding a remote script

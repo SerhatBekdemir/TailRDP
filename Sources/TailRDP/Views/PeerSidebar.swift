@@ -80,6 +80,12 @@ struct PeerSidebar: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .onChange(of: showOffline) { _, _ in
+            selection = store.reconcileSelection(selection)
+        }
+        .onChange(of: store.profiles.map(\.online)) { _, _ in
+            selection = store.reconcileSelection(selection)
+        }
         .sheet(isPresented: $showAddHost) { addHostSheet }
         .alert("Delete Host?", isPresented: Binding(
             get: { hostToDelete != nil },

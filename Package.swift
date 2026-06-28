@@ -18,6 +18,7 @@ let package = Package(
             name: "TailRDPTests",
             dependencies: ["TailRDP"],
             path: "Tests/TailRDPTests",
+            exclude: ["Fixtures"],
             swiftSettings: [
                 .swiftLanguageMode(.v5),
                 .unsafeFlags(["-strict-concurrency=minimal"])

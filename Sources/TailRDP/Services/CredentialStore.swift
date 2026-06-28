@@ -1,46 +1,43 @@
 import Foundation
+import LocalAuthentication
 import Security
 
-/// Stores per-host RDP passwords in the macOS Keychain (service `app.tailrdp`).
-/// Username is part of HostProfile. One-time import from legacy `credentials.json`.
+/// Per-host RDP passwords stored locally in Application Support (not macOS Keychain).
+/// Avoids the system "login keychain password" dialog on every ad-hoc app rebuild.
 final class CredentialStore {
     static let shared = CredentialStore()
     static let service = "app.tailrdp"
 
-    private let legacyURL: URL
+    private let fileURL: URL
+    private let lock = NSLock()
+    private var passwords: [String: String] = [:]
 
-    private init() {
+    private init(fileURL: URL, migrateKeychain: Bool) {
+        self.fileURL = fileURL
+        try? FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        loadFromDisk()
+        if migrateKeychain { migrateFromKeychainIfNeeded() }
+    }
+
+    private convenience init() {
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("TailRDP", isDirectory: true)
-        legacyURL = base.appendingPathComponent("credentials.json")
-        migrateFromLegacyJSONIfNeeded()
+        self.init(fileURL: base.appendingPathComponent("credentials.json"), migrateKeychain: true)
     }
 
-    private func migrateFromLegacyJSONIfNeeded() {
-        guard FileManager.default.fileExists(atPath: legacyURL.path),
-              let data = try? Data(contentsOf: legacyURL),
-              let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return }
-        for (id, pwd) in dict where !pwd.isEmpty {
-            if password(for: id) == nil {
-                set(pwd, for: id)
-            }
-        }
-        try? FileManager.default.removeItem(at: legacyURL)
+    /// Isolated store for unit tests — does not touch Application Support or Keychain.
+    convenience init(testFileURL: URL) {
+        self.init(fileURL: testFileURL, migrateKeychain: false)
     }
 
     func password(for id: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: id,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        lock.lock()
+        defer { lock.unlock() }
+        return passwords[id]
     }
 
     func hasPassword(for id: String) -> Bool { !(password(for: id)?.isEmpty ?? true) }
@@ -48,42 +45,95 @@ final class CredentialStore {
     @discardableResult
     func set(_ password: String, for id: String) -> Bool {
         let trimmed = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        lock.lock()
+        defer { lock.unlock() }
         if trimmed.isEmpty {
-            remove(for: id)
-            return true
+            passwords.removeValue(forKey: id)
+        } else {
+            passwords[id] = trimmed
         }
-        let data = Data(trimmed.utf8)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: id
-        ]
-        let attrs: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-        ]
-        let updateStatus = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
-        if updateStatus == errSecSuccess { return true }
-        if updateStatus == errSecItemNotFound {
-            var addQuery = query
-            addQuery[kSecValueData as String] = data
-            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
-            return addStatus == errSecSuccess
-        }
-        remove(for: id)
-        var addQuery = query
-        addQuery[kSecValueData as String] = data
-        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+        return saveToDisk()
     }
 
     func remove(for id: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        passwords.removeValue(forKey: id)
+        _ = saveToDisk()
+    }
+
+    // MARK: - Private
+
+    private func loadFromDisk() {
+        guard let data = try? Data(contentsOf: fileURL),
+              let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return }
+        passwords = dict
+    }
+
+    @discardableResult
+    private func saveToDisk() -> Bool {
+        do {
+            let enc = JSONEncoder()
+            enc.outputFormatting = [.sortedKeys]
+            let data = try enc.encode(passwords)
+            try data.write(to: fileURL, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: Int16(0o600))],
+                ofItemAtPath: fileURL.path
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// One-time silent import from legacy Keychain items, then delete them so macOS never prompts.
+    private func migrateFromKeychainIfNeeded() {
+        let flag = "app.tailrdp.keychainMigratedToFile"
+        guard !UserDefaults.standard.bool(forKey: flag) else { return }
+        defer { UserDefaults.standard.set(true, forKey: flag) }
+
+        let context = LAContext()
+        context.interactionNotAllowed = true
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: id
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecUseAuthenticationContext as String: context,
         ]
-        SecItemDelete(query as CFDictionary)
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecSuccess {
+            importKeychainItems(result)
+            if !passwords.isEmpty { _ = saveToDisk() }
+        }
+
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.service,
+        ]
+        SecItemDelete(deleteQuery as CFDictionary)
+    }
+
+    private func importKeychainItems(_ result: CFTypeRef?) {
+        if let items = result as? [[String: Any]] {
+            for item in items { importKeychainItem(item) }
+        } else if let item = result as? [String: Any] {
+            importKeychainItem(item)
+        }
+    }
+
+    private func importKeychainItem(_ item: [String: Any]) {
+        guard let account = item[kSecAttrAccount as String] as? String,
+              let data = item[kSecValueData as String] as? Data,
+              let pwd = String(data: data, encoding: .utf8),
+              !pwd.isEmpty else { return }
+        if passwords[account] == nil {
+            passwords[account] = pwd
+        }
     }
 }

@@ -38,6 +38,7 @@ final class ProfileStore: ObservableObject {
         profiles = list.map {
             var p = $0
             p.normalizeCredentials()
+            p.settings.normalizeDisplayOptions()
             if let text = p.stickyBanner?.text,
                text.contains("authenticate") || text.contains("Sign-in failed") || text.contains("re-save") {
                 p.stickyBanner = nil
@@ -196,6 +197,14 @@ final class ProfileStore: ObservableObject {
         return profiles.filter(\.online)
     }
 
+    /// When offline hosts are hidden, move selection to a visible host if needed.
+    func reconcileSelection(_ current: String?) -> String? {
+        guard let current else { return visibleProfiles.first?.id }
+        let showOffline = UserDefaults.standard.bool(forKey: AppSettingsKey.showOffline)
+        guard !showOffline, let p = profile(id: current), !p.online else { return current }
+        return visibleProfiles.first?.id
+    }
+
     /// Update online/address/os for known hosts; create defaults for new RDP
     /// candidates; mark vanished hosts offline.
     func merge(peers: [TailscalePeer]) {
@@ -215,7 +224,7 @@ final class ProfileStore: ObservableObject {
         save()
     }
 
-    /// Export profiles as JSON (passwords stay in Keychain — re-enter after import).
+    /// Export profiles as JSON (passwords stay in credentials.json — re-enter after import on another Mac).
     func exportData() throws -> Data {
         let bundle = ProfileExportBundle(profiles: profiles)
         let enc = JSONEncoder()

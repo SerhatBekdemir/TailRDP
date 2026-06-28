@@ -66,7 +66,7 @@ struct TailscaleSettingsView: View {
             }
 
             Section("Profiles") {
-                Text("Export saves connection settings only. Passwords stay in Keychain — re-enter them after import.")
+                Text("Export saves connection settings only. Passwords stay on this Mac — re-enter them after import.")
                     .font(.caption2).foregroundStyle(.secondary)
                 HStack {
                     Button("Export…") { exportProfiles() }

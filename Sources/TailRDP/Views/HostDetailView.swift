@@ -267,7 +267,7 @@ struct HostDetailView: View {
             }
         }
         guard CredentialStore.shared.set(sheetPassword, for: profile.id) else {
-            credentialsMessage = "Could not save sign-in to Keychain."
+            credentialsMessage = "Could not save sign-in."
             return
         }
         showCredentialsSheet = false

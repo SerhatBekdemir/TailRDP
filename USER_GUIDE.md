@@ -101,7 +101,7 @@ Status strip for the selected host: success (green), paused (blue), error (red).
 
 1. Select a host in the sidebar.
 2. Open **Connection** → enter username → enter password → **Save**.
-   - Password is stored in **macOS Keychain** on this Mac only.
+   - Password is stored in **`~/Library/Application Support/TailRDP/credentials.json`** on this Mac only (mode 0600).
 3. Click **Connect** (or **Resume** / **Reconnect** if a sticky banner is showing).
 
 ### Offline connect
@@ -138,7 +138,7 @@ FreeRDP’s built-in auto-reconnect is **disabled for Linux hosts** because it c
 ### Basic
 
 - **Display name**, **address**, **port** (default 3389)
-- **Username** and **password** (Keychain)
+- **Username** and **password** (local credentials file)
 - **Resolution** — fixed or dynamic
 - **Codec** — AVC444, AVC420, RemoteFX, progressive
 - **Network profile** — LAN, broadband, WAN, auto (maps to FreeRDP `/network:`)
@@ -226,8 +226,8 @@ Open via **TailRDP → Settings** (or ⌘,).
 | Data | Location |
 |------|----------|
 | Host profiles (settings, banners, health) | `~/Library/Application Support/TailRDP/profiles.json` |
-| RDP passwords | macOS Keychain, service `app.tailrdp`, account = profile id |
-| Usernames | In `profiles.json` (not Keychain) |
+| RDP passwords | `~/Library/Application Support/TailRDP/credentials.json` (profile id as key) |
+| Usernames | In `profiles.json` |
 
 Passwords are **bound to this Mac and bundle ID**. They do not travel with profile export.
 

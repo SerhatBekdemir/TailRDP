@@ -44,7 +44,7 @@ swift run TailRDP --verify-session   # session logic smoke test (no UI)
 
 **First use:** complete the setup wizard (Tailscale + FreeRDP check, default username, tailnet refresh), select a host, save the RDP password in the **Connection** tab, click **Connect**.
 
-Passwords live in the macOS Keychain (`app.tailrdp`) and are passed to FreeRDP via `/p:` at launch — not stored in profile JSON. See [SECURITY.md](SECURITY.md).
+Passwords are saved in `~/Library/Application Support/TailRDP/credentials.json` on this Mac and passed to FreeRDP via `/p:` at launch — not stored in profile export JSON. See [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -81,7 +81,7 @@ Resources/        App icon assets
 **On disk (runtime):**
 
 - Profiles: `~/Library/Application Support/TailRDP/profiles.json`
-- Passwords: Keychain service `app.tailrdp`, account = profile `id`
+- Passwords: `~/Library/Application Support/TailRDP/credentials.json` (profile `id` as key)
 
 ---
 

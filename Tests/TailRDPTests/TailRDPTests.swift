@@ -93,11 +93,50 @@ final class RemoteScriptLoaderTests: XCTestCase {
     }
 }
 
+final class RDPSettingsTests: XCTestCase {
+    func testDisplayModeFullscreenSetsRecommendedResolution() {
+        var settings = RDPSettings()
+        settings.width = 2560
+        settings.height = 1440
+        settings.apply(displayMode: .fullscreen)
+        XCTAssertTrue(settings.fullscreen)
+        XCTAssertFalse(settings.dynamicResolution)
+        XCTAssertFalse(settings.multiMonitor)
+        XCTAssertEqual(settings.width, 1920)
+        XCTAssertEqual(settings.height, 1080)
+    }
+
+    func testDisplayModePreservesCustomFullscreenResolution() {
+        var settings = RDPSettings()
+        settings.width = 1920
+        settings.height = 1080
+        settings.apply(displayMode: .fullscreen)
+        XCTAssertEqual(settings.width, 1920)
+        XCTAssertEqual(settings.height, 1080)
+    }
+
+    func testConnectSummaryIncludesFullscreen() {
+        var settings = RDPSettings()
+        settings.apply(displayMode: .fullscreen)
+        XCTAssertTrue(settings.connectSummary.contains("fullscreen 1920×1080"))
+    }
+
+    func testNormalizeClearsConflictingFlags() {
+        var settings = RDPSettings()
+        settings.fullscreen = true
+        settings.dynamicResolution = true
+        settings.multiMonitor = true
+        settings.normalizeDisplayOptions()
+        XCTAssertFalse(settings.dynamicResolution)
+        XCTAssertFalse(settings.multiMonitor)
+    }
+}
+
 final class RDPLauncherArgumentTests: XCTestCase {
     @MainActor
     func testLinuxSkipsAutoReconnect() {
         let launcher = RDPLauncher()
-        var profile = HostProfile(
+        let profile = HostProfile(
             id: "box", hostName: "box", displayName: "box", address: "100.64.0.1", os: "linux",
             online: true, rdpUsername: "u", sshUsername: "u", rdpPort: 3389,
             settings: { var s = RDPSettings(); s.autoReconnect = true; return s }(),
@@ -130,6 +169,32 @@ final class RDPLauncherArgumentTests: XCTestCase {
         )
         let args = launcher.buildArguments(for: profile, password: nil)
         XCTAssertTrue(args.contains("/u:aegis"))
+    }
+
+    @MainActor
+    func testMacFullscreenUsesNativePresentation() {
+        let launcher = RDPLauncher()
+        var settings = RDPSettings()
+        settings.fullscreen = true
+        settings.width = 1920
+        settings.height = 1080
+        let profile = HostProfile(
+            id: "box", hostName: "box", displayName: "box", address: "100.64.0.1", os: "linux",
+            online: true, rdpUsername: "u", sshUsername: "u", rdpPort: 3389,
+            settings: settings, lastRemoteDir: ""
+        )
+        let args = launcher.buildArguments(for: profile, password: nil)
+        #if os(macOS)
+        XCTAssertFalse(args.contains("/f"))
+        XCTAssertFalse(args.contains("-decorations"))
+        XCTAssertTrue(args.contains("/size:1920x1080"))
+        XCTAssertTrue(args.contains("+dynamic-resolution"))
+        XCTAssertTrue(args.contains("/floatbar:sticky:on,default:visible,show:fullscreen"))
+        XCTAssertFalse(args.contains("/size:2560x1440"))
+        #else
+        XCTAssertTrue(args.contains("/f"))
+        XCTAssertTrue(args.contains("/size:1920x1080"))
+        #endif
     }
 }
 
@@ -169,6 +234,7 @@ final class SessionHealthTests: XCTestCase {
     }
 }
 
+@MainActor
 final class ProfileExportTests: XCTestCase {
     func testExportImportRoundTrip() throws {
         let url = FileManager.default.temporaryDirectory
@@ -188,12 +254,11 @@ final class ProfileExportTests: XCTestCase {
         XCTAssertTrue(result.needsPassword.contains("Dev"))
     }
 
-    @MainActor
     func testImportMergePreservesLocalSessionState() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("TailRDPExport-\(UUID().uuidString)/profiles.json")
         let store = ProfileStore(testProfilesURL: url)
-        var local = HostProfile(
+        let local = HostProfile(
             id: "dev", hostName: "dev", displayName: "Dev", address: "100.64.0.3", os: "linux",
             online: true, rdpUsername: "alice", sshUsername: "alice", rdpPort: 3389,
             settings: .default, lastRemoteDir: "/home/alice",
@@ -251,5 +316,162 @@ final class ProfileStoreMergeTests: XCTestCase {
         )
         store.merge(peers: [selfPeer])
         XCTAssertTrue(store.profiles.isEmpty)
+    }
+}
+
+final class CredentialStoreTests: XCTestCase {
+    func testRoundTripSaveLoadRemove() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TailRDPTests-\(UUID().uuidString)/credentials.json")
+        let store = CredentialStore(testFileURL: url)
+        XCTAssertFalse(store.hasPassword(for: "dev"))
+        XCTAssertTrue(store.set("secret", for: "dev"))
+        XCTAssertEqual(store.password(for: "dev"), "secret")
+        XCTAssertTrue(store.hasPassword(for: "dev"))
+        store.remove(for: "dev")
+        XCTAssertNil(store.password(for: "dev"))
+    }
+
+    func testEmptyPasswordRemovesEntry() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TailRDPTests-\(UUID().uuidString)/credentials.json")
+        let store = CredentialStore(testFileURL: url)
+        XCTAssertTrue(store.set("x", for: "a"))
+        XCTAssertTrue(store.set("   ", for: "a"))
+        XCTAssertFalse(store.hasPassword(for: "a"))
+    }
+
+    func testTrimsPasswordWhitespace() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TailRDPTests-\(UUID().uuidString)/credentials.json")
+        let store = CredentialStore(testFileURL: url)
+        XCTAssertTrue(store.set("  pass  ", for: "h"))
+        XCTAssertEqual(store.password(for: "h"), "pass")
+    }
+}
+
+@MainActor
+final class ProfileStoreFixtureTests: XCTestCase {
+    func testLoadProductionScaleFixture() throws {
+        let fixtureURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/sanitized-production-profiles.json")
+        let data = try Data(contentsOf: fixtureURL)
+        let profiles = try JSONDecoder().decode([HostProfile].self, from: data)
+        XCTAssertEqual(profiles.count, 40)
+        XCTAssertTrue(profiles.contains { $0.os == "linux" && $0.online })
+        XCTAssertTrue(profiles.contains { !$0.online })
+        XCTAssertTrue(profiles.contains { $0.settings.width == 1366 && $0.settings.height == 768 })
+    }
+
+    func testFixtureRoundTripThroughStore() throws {
+        let fixtureURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/sanitized-production-profiles.json")
+        let data = try Data(contentsOf: fixtureURL)
+        let decoded = try JSONDecoder().decode([HostProfile].self, from: data)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TailRDPTests-\(UUID().uuidString)/profiles.json")
+        let store = ProfileStore(testProfilesURL: url)
+        store.profiles = decoded
+        store.save()
+        store.load()
+        XCTAssertEqual(store.profiles.count, 40)
+        for original in decoded {
+            let loaded = store.profile(id: original.id)
+            XCTAssertEqual(loaded?.displayName, original.displayName)
+            XCTAssertEqual(loaded?.settings.displayMode, original.settings.displayMode)
+        }
+    }
+
+    func testVisibleProfilesFiltersOffline() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TailRDPTests-\(UUID().uuidString)/profiles.json")
+        let store = ProfileStore(testProfilesURL: url)
+        store.profiles = [
+            HostProfile(
+                id: "on", hostName: "on", displayName: "On", address: "1", os: "linux",
+                online: true, rdpUsername: "u", sshUsername: "u", rdpPort: 3389,
+                settings: .default, lastRemoteDir: ""
+            ),
+            HostProfile(
+                id: "off", hostName: "off", displayName: "Off", address: "2", os: "linux",
+                online: false, rdpUsername: "u", sshUsername: "u", rdpPort: 3389,
+                settings: .default, lastRemoteDir: ""
+            ),
+        ]
+        let defaults = UserDefaults.standard
+        let key = AppSettingsKey.showOffline
+        let prior = defaults.bool(forKey: key)
+        defer { defaults.set(prior, forKey: key) }
+        defaults.set(false, forKey: key)
+        XCTAssertEqual(store.visibleProfiles.count, 1)
+        XCTAssertEqual(store.visibleProfiles.first?.id, "on")
+        defaults.set(true, forKey: key)
+        XCTAssertEqual(store.visibleProfiles.count, 2)
+    }
+
+    func testReconcileSelectionMovesOffHiddenOfflineHost() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TailRDPTests-\(UUID().uuidString)/profiles.json")
+        let store = ProfileStore(testProfilesURL: url)
+        store.profiles = [
+            HostProfile(
+                id: "on", hostName: "on", displayName: "On", address: "1", os: "linux",
+                online: true, rdpUsername: "u", sshUsername: "u", rdpPort: 3389,
+                settings: .default, lastRemoteDir: ""
+            ),
+            HostProfile(
+                id: "off", hostName: "off", displayName: "Off", address: "2", os: "linux",
+                online: false, rdpUsername: "u", sshUsername: "u", rdpPort: 3389,
+                settings: .default, lastRemoteDir: ""
+            ),
+        ]
+        let defaults = UserDefaults.standard
+        let key = AppSettingsKey.showOffline
+        let prior = defaults.bool(forKey: key)
+        defer { defaults.set(prior, forKey: key) }
+        defaults.set(false, forKey: key)
+        XCTAssertEqual(store.reconcileSelection("off"), "on")
+        XCTAssertEqual(store.reconcileSelection("on"), "on")
+        defaults.set(true, forKey: key)
+        XCTAssertEqual(store.reconcileSelection("off"), "off")
+    }
+
+    func testAddManualHostValidation() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TailRDPTests-\(UUID().uuidString)/profiles.json")
+        let store = ProfileStore(testProfilesURL: url)
+        XCTAssertEqual(store.addManualHost(displayName: "", address: "1.2.3.4"), "Display name is required.")
+        XCTAssertEqual(store.addManualHost(displayName: "Box", address: ""), "Address is required.")
+        XCTAssertNil(store.addManualHost(displayName: "Box", address: "100.64.0.5"))
+        XCTAssertEqual(store.addManualHost(displayName: "Box", address: "100.64.0.6"), "A host named \"Box\" already exists.")
+    }
+}
+
+final class RDPSettingsLegacyTests: XCTestCase {
+    func testLegacySmartReconnectFieldNames() throws {
+        let json = """
+        {"width":1920,"height":1080,"autoDiagnoseOnFailure":false}
+        """.data(using: .utf8)!
+        let settings = try JSONDecoder().decode(RDPSettings.self, from: json)
+        XCTAssertFalse(settings.smartReconnect)
+    }
+
+    func testConflictingFullscreenFlagsNormalizedOnDecode() throws {
+        let json = """
+        {"fullscreen":true,"dynamicResolution":true,"multiMonitor":true}
+        """.data(using: .utf8)!
+        let settings = try JSONDecoder().decode(RDPSettings.self, from: json)
+        XCTAssertFalse(settings.dynamicResolution)
+        XCTAssertFalse(settings.multiMonitor)
+    }
+
+    func testCustomResolutionDisplayLabel() {
+        var settings = RDPSettings()
+        settings.width = 1366
+        settings.height = 768
+        XCTAssertEqual(settings.displayMode, .window)
+        XCTAssertEqual(settings.connectSummary, "1366×768, AVC420, lan")
     }
 }

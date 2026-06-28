@@ -132,22 +132,3 @@ struct SessionHealth: Codable, Equatable, Sendable {
     static let resumeDelayStepMs = 500
     static let resumeDelayBackoffMs = 1500
 }
-
-extension RDPSettings {
-    /// Conservative client settings used after repeated connect failures.
-    static var safeFallback: RDPSettings {
-        var s = RDPSettings()
-        s.width = 1920
-        s.height = 1080
-        s.bpp = 16
-        s.codec = .avc420
-        s.network = .lan
-        s.dynamicResolution = false
-        return s
-    }
-
-    var connectSummary: String {
-        let res = dynamicResolution ? "dynamic" : "\(width)×\(height)"
-        return "\(res), \(codec.rawValue), \(network.rawValue)"
-    }
-}
