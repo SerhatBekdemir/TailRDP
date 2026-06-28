@@ -74,10 +74,14 @@ struct LastWorkingSnapshot: Codable, Equatable {
     var savedAt: Date
 }
 
-/// Short-lived green status for clean disconnect — not persisted on the profile.
-struct EphemeralBanner: Equatable {
-    var hostID: String
+/// Short-lived per-host status (connect ack, disconnect flash) — in memory only.
+struct HostFlashBanner: Equatable {
+    enum Style: Equatable {
+        case success, paused, error
+    }
+
     var text: String
+    var style: Style
 }
 
 /// Per-host connect reliability — drives crash recovery only.

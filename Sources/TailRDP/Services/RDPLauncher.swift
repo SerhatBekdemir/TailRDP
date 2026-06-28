@@ -35,6 +35,8 @@ final class RDPLauncher: ObservableObject {
     private var userDisconnects: Set<String> = []
     private var sessionStartedAt: [String: Date] = [:]
     private var sessionSettingsUsed: [String: RDPSettings] = [:]
+    /// Bumped before each launch so stale termination handlers from a prior client are ignored.
+    private var sessionGeneration: [String: UInt64] = [:]
 
     func isActive(_ id: String) -> Bool { activeSessions.contains(id) }
 
@@ -66,8 +68,8 @@ final class RDPLauncher: ObservableObject {
         a.append(s.clipboard ? "+clipboard" : "-clipboard")
         if s.sound { a.append("/sound") }
         if s.mapCmdToCtrl { a.append("/kbd:remap:0x15b=0x1d,remap:0x15c=0x1d") }
-        // FreeRDP auto-reconnect fights window-close / pause; only opt in explicitly.
-        if s.autoReconnect { a.append("+auto-reconnect") }
+        // Gnome Remote Desktop: auto-reconnect causes black-screen stalls after pause.
+        if s.autoReconnect, profile.os != "linux" { a.append("+auto-reconnect") }
         return a
     }
 
@@ -77,11 +79,18 @@ final class RDPLauncher: ObservableObject {
         return ([bin] + buildArguments(for: profile, password: masked)).joined(separator: " ")
     }
 
-    func launch(profile: HostProfile) -> String? {
+    func launch(profile: HostProfile) async -> String? {
         guard let bin = binaryPath else {
             return "sdl-freerdp not found — install with: brew install freerdp"
         }
         guard !profile.address.isEmpty else { return "No address set for this machine" }
+
+        // Bump generation before killing any prior client so its termination handler is ignored.
+        let generation = (sessionGeneration[profile.id] ?? 0) + 1
+        sessionGeneration[profile.id] = generation
+
+        // Drop a stuck local client before opening a new connection to the same host.
+        await terminateClients(to: profile)
 
         let password = CredentialStore.shared.password(for: profile.id) ?? ""
 
@@ -103,6 +112,7 @@ final class RDPLauncher: ObservableObject {
             @unknown default: reason = "unknown"
             }
             Task { @MainActor in
+                guard self?.sessionGeneration[profile.id] == generation else { return }
                 let started = self?.sessionStartedAt[profile.id] ?? Date()
                 let duration = Date().timeIntervalSince(started)
                 let loggedOut = self?.userDisconnects.remove(profile.id) != nil
@@ -147,5 +157,29 @@ final class RDPLauncher: ObservableObject {
         if sessionEndNotice?.profileID == profileID {
             sessionEndNotice = nil
         }
+    }
+
+    /// End any local FreeRDP client still connected to this host (including orphans from a prior app run).
+    private func terminateClients(to profile: HostProfile) async {
+        let tracked = processes[profile.id]
+        let target = profile.address.isEmpty ? nil : "/v:\(profile.address):\(profile.rdpPort)"
+        activeSessions.remove(profile.id)
+        processes[profile.id] = nil
+        stderrPipes[profile.id] = nil
+        sessionStartedAt[profile.id] = nil
+
+        await Task.detached {
+            if let tracked {
+                tracked.terminate()
+                tracked.waitUntilExit()
+            }
+            guard let target else { return }
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+            proc.arguments = ["-f", target]
+            try? proc.run()
+            proc.waitUntilExit()
+            try? await Task.sleep(for: .milliseconds(250))
+        }.value
     }
 }

@@ -201,8 +201,9 @@ struct ConnectionSettingsView: View {
 
     private func checkRemoteStatus() {
         isAdvancedBusy = true
-        Task {
-            let result = RemoteDisplayRecovery.inspect(profile)
+        let p = profile
+        Task.detached(priority: .userInitiated) {
+            let result = RemoteDisplayRecovery.inspect(p)
             await MainActor.run {
                 isAdvancedBusy = false
                 switch result {
@@ -222,8 +223,9 @@ struct ConnectionSettingsView: View {
 
     private func resetRemoteSession() {
         isAdvancedBusy = true
-        Task {
-            let result = RemoteDisplayRecovery.recover(profile)
+        let p = profile
+        Task.detached(priority: .userInitiated) {
+            let result = RemoteDisplayRecovery.recover(p)
             await MainActor.run {
                 isAdvancedBusy = false
                 switch result {

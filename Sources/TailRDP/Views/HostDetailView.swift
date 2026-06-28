@@ -11,16 +11,9 @@ struct HostDetailView: View {
         var id: String { rawValue }
     }
 
-    /// Short-lived banners (connect ack, validation) — not stored on the profile.
-    private struct TransientBanner: Identifiable {
-        let id = UUID()
-        let text: String
-        let style: BannerStyle
-    }
-
     @State private var tab: Tab = .connection
-    @State private var transientBanner: TransientBanner?
     @State private var isConnecting = false
+    @State private var isEndingRemote = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -37,23 +30,8 @@ struct HostDetailView: View {
             content
         }
         .onChange(of: profile) { _, _ in store.save() }
-        .onChange(of: store.ephemeralBanner) { _, flash in
-            guard let flash, flash.hostID == profile.id else { return }
-            transientBanner = TransientBanner(text: flash.text, style: .success)
-            store.clearEphemeralBanner(hostID: profile.id)
-        }
-        .onAppear {
-            if let flash = store.ephemeralBanner, flash.hostID == profile.id {
-                transientBanner = TransientBanner(text: flash.text, style: .success)
-                store.clearEphemeralBanner(hostID: profile.id)
-            }
-        }
-        .onChange(of: launcher.sessionEndNotice) { _, notice in
-            guard notice?.profileID == profile.id else { return }
-            transientBanner = nil
-        }
-        .onChange(of: profile.stickyBanner) { _, sticky in
-            if sticky != nil { transientBanner = nil }
+        .onChange(of: launcher.isActive(profile.id)) { _, active in
+            if active { store.clearFlashBanner(profileID: profile.id) }
         }
         .safeAreaInset(edge: .bottom) { bannerView }
     }
@@ -105,8 +83,8 @@ struct HostDetailView: View {
             } label: {
                 if isConnecting {
                     ProgressView().controlSize(.small).frame(minWidth: 90)
-                } else if profile.stickyBanner?.actionLabel != nil {
-                    Label(profile.stickyBanner!.actionLabel!, systemImage: "play.fill")
+                } else if let actionLabel = profile.stickyBanner?.actionLabel {
+                    Label(actionLabel, systemImage: "play.fill")
                         .frame(minWidth: 90)
                 } else {
                     Label("Connect", systemImage: "play.fill").frame(minWidth: 90)
@@ -114,7 +92,7 @@ struct HostDetailView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(profile.address.isEmpty || !profile.online || isConnecting)
+            .disabled(profile.address.isEmpty || !profile.online || isConnecting || isEndingRemote)
             .help(connectHelp)
         }
     }
@@ -129,110 +107,72 @@ struct HostDetailView: View {
 
     @ViewBuilder private var bannerView: some View {
         if let sticky = profile.stickyBanner {
-            bannerContent(
-                text: sticky.text,
-                detail: sticky.detail,
-                style: sticky.style,
-                actionLabel: sticky.actionLabel,
-                onDismiss: { store.clearStickyBanner(profileID: profile.id) }
+            if sticky.style == .paused {
+                StatusBannerView(
+                    text: stickyDisplayText(sticky),
+                    style: .paused,
+                    actionLabel: isEndingRemote ? "Ending…" : "Disconnect",
+                    onAction: isEndingRemote ? nil : disconnectRemoteSession,
+                    dismissable: false
+                )
+            } else {
+                StatusBannerView(
+                    text: stickyDisplayText(sticky),
+                    style: StatusBannerView.Style(hostStatus: sticky.style),
+                    actionLabel: sticky.actionLabel,
+                    onAction: sticky.actionLabel != nil ? connect : nil,
+                    onDismiss: { store.clearStickyBanner(profileID: profile.id) }
+                )
+            }
+        } else if let flash = store.flashBanner(for: profile.id) {
+            StatusBannerView(
+                text: flash.text,
+                style: StatusBannerView.Style(flash: flash.style),
+                onDismiss: { store.clearFlashBanner(profileID: profile.id) }
             )
-        } else if let transient = transientBanner {
-            bannerContent(
-                text: transient.text,
-                detail: nil,
-                style: transient.style,
-                actionLabel: nil,
-                onDismiss: { transientBanner = nil }
+        }
+    }
+
+    private func stickyDisplayText(_ sticky: HostStatusBanner) -> String {
+        guard let detail = sticky.detail, !detail.isEmpty else { return sticky.text }
+        return "\(sticky.text) \(detail)"
+    }
+
+    private func disconnectRemoteSession() {
+        isEndingRemote = true
+        Task {
+            defer { isEndingRemote = false }
+            let result = await SessionCoordinator.disconnectRemotePausedSession(
+                profileID: profile.id,
+                store: store
             )
-        }
-    }
-
-    @ViewBuilder
-    private func bannerContent(
-        text: String,
-        detail: String?,
-        style: HostStatusBanner.Style,
-        actionLabel: String?,
-        onDismiss: @escaping () -> Void
-    ) -> some View {
-        bannerContent(
-            text: text,
-            detail: detail,
-            style: bannerStyle(for: style),
-            actionLabel: actionLabel,
-            onDismiss: onDismiss
-        )
-    }
-
-    private enum BannerStyle {
-        case success, paused, error
-
-        var icon: String {
-            switch self {
-            case .success: return "checkmark.circle.fill"
-            case .paused: return "pause.circle.fill"
-            case .error: return "xmark.octagon.fill"
+            if let updated = store.profile(id: profile.id) {
+                profile = updated
+            }
+            if result.isError {
+                store.setFlashBanner(
+                    profileID: profile.id,
+                    banner: HostFlashBanner(text: result.message, style: .error)
+                )
             }
         }
-
-        var color: Color {
-            switch self {
-            case .success: return .green
-            case .paused: return Color(red: 0.2, green: 0.45, blue: 0.85)
-            case .error: return .red
-            }
-        }
-    }
-
-    private func bannerStyle(for style: HostStatusBanner.Style) -> BannerStyle {
-        style == .paused ? .paused : .error
-    }
-
-    @ViewBuilder
-    private func bannerContent(
-        text: String,
-        detail: String?,
-        style: BannerStyle,
-        actionLabel: String?,
-        onDismiss: @escaping () -> Void
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: style.icon)
-                Text(text).lineLimit(3)
-                Spacer()
-                Button(action: onDismiss) { Image(systemName: "xmark") }
-                    .buttonStyle(.plain)
-            }
-            if let detail {
-                Text(detail).font(.caption).opacity(0.9)
-            }
-            if let action = actionLabel {
-                HStack {
-                    Spacer()
-                    Button(action) { connect() }
-                        .buttonStyle(.bordered)
-                        .tint(.white)
-                }
-            }
-        }
-        .font(.callout)
-        .foregroundStyle(.white)
-        .padding(10)
-        .background(style.color)
     }
 
     private func connect() {
         guard CredentialStore.shared.hasPassword(for: profile.id) else {
             tab = .connection
-            transientBanner = TransientBanner(
-                text: "Set a password in the Connection tab first.",
-                style: .error
+            store.setFlashBanner(
+                profileID: profile.id,
+                banner: HostFlashBanner(
+                    text: "Set a password in the Connection tab first.",
+                    style: .error
+                )
             )
             return
         }
         let resuming = profile.stickyBanner?.style == .paused
-        transientBanner = nil
+            || profile.health.lastEndKind == .paused
+        store.clearFlashBanner(profileID: profile.id)
         isConnecting = true
         Task {
             defer { isConnecting = false }
@@ -246,12 +186,18 @@ struct HostDetailView: View {
                 profile = updated
             }
             if result.isError {
-                transientBanner = TransientBanner(text: result.message, style: .error)
+                store.setFlashBanner(
+                    profileID: profile.id,
+                    banner: HostFlashBanner(text: result.message, style: .error)
+                )
             } else {
                 store.clearStickyBanner(profileID: profile.id)
-                transientBanner = TransientBanner(
-                    text: resuming ? "Resuming your paused session…" : result.message,
-                    style: resuming ? .paused : .success
+                store.setFlashBanner(
+                    profileID: profile.id,
+                    banner: HostFlashBanner(
+                        text: resuming ? "Resuming your paused session…" : result.message,
+                        style: resuming ? .paused : .success
+                    )
                 )
             }
         }

@@ -18,10 +18,13 @@ enum SessionCoordinator {
         var statusParts: [String] = []
         let useFallback = base.health.usingSafeFallback || base.health.consecutiveFailures >= 2
 
+        let isLinuxResume = base.os == "linux"
+            && (resumingPaused || base.health.lastEndKind == .paused || base.stickyBanner?.style == .paused)
+
         // Gnome Remote Desktop can hang if the client reconnects before the prior
         // RDP socket is fully torn down — give Linux hosts a moment after pause.
-        if resumingPaused, base.os == "linux" {
-            try? await Task.sleep(for: .seconds(2))
+        if isLinuxResume {
+            try? await Task.sleep(for: .seconds(3))
         }
 
         // Only heal before connect after a prior crash — never after pause or logout.
@@ -35,7 +38,7 @@ enum SessionCoordinator {
         }
 
         let launchProfile = profileForLaunch(base)
-        if resumingPaused {
+        if isLinuxResume {
             statusParts.append("Resuming paused session")
         } else if useFallback {
             statusParts.append("Connecting with safe fallback (\(RDPSettings.safeFallback.connectSummary))")
@@ -45,7 +48,7 @@ enum SessionCoordinator {
             statusParts.append("Connecting (\(launchProfile.settings.connectSummary))")
         }
 
-        if let err = launcher.launch(profile: launchProfile) {
+        if let err = await launcher.launch(profile: launchProfile) {
             store.update(id: profileID) { p in
                 var h = p.health
                 h.consecutiveFailures += 1
@@ -112,6 +115,55 @@ enum SessionCoordinator {
         }
     }
 
+    /// End a paused remote session on the host (Linux via SSH) and clear the sticky banner.
+    static func disconnectRemotePausedSession(
+        profileID: String,
+        store: ProfileStore
+    ) async -> (message: String, isError: Bool) {
+        guard let profile = store.profile(id: profileID) else {
+            return ("Host not found.", true)
+        }
+
+        if profile.os == "linux" {
+            let result = await Task.detached {
+                RemoteDisplayRecovery.terminateRemoteSessions(profile)
+            }.value
+            switch result {
+            case .failure(let err):
+                return (err.message, true)
+            case .success(let detail):
+                store.clearStickyBanner(profileID: profileID)
+                store.update(id: profileID) { p in
+                    var h = SessionHealth()
+                    h.lastEndKind = .loggedOut
+                    p.sessionHealth = h
+                }
+                store.setFlashBanner(
+                    profileID: profileID,
+                    banner: HostFlashBanner(text: "Remote session ended.", style: .success)
+                )
+                let msg = detail.isEmpty ? "Remote session ended." : "Remote session ended. \(detail.capitalized)."
+                return (msg, false)
+            }
+        }
+
+        // Non-Linux: no SSH hook to log off a paused RDP session — clear local state only.
+        store.clearStickyBanner(profileID: profileID)
+        store.update(id: profileID) { p in
+            var h = SessionHealth()
+            h.lastEndKind = .loggedOut
+            p.sessionHealth = h
+        }
+        store.setFlashBanner(
+            profileID: profileID,
+            banner: HostFlashBanner(
+                text: "Marked disconnected. The remote session may still be running on the host.",
+                style: .success
+            )
+        )
+        return ("Marked disconnected.", false)
+    }
+
     // MARK: - Private
 
     private static func resolvePausedLoggedOutOrCrash(
@@ -143,17 +195,19 @@ enum SessionCoordinator {
         used: RDPSettings,
         store: ProfileStore
     ) async -> SessionEndOutcome {
-        let errInfo = notice.errInfoCode ?? extractErrInfo(from: notice.message)
-        var report: RemoteSessionReport?
-        if store.profile(id: notice.profileID)?.os == "linux" {
-            if case .success(let r) = RemoteDisplayRecovery.discoverFailure(
-                store.profile(id: notice.profileID)!
-            ) {
-                report = r
-            }
+        guard let profile = store.profile(id: notice.profileID) else {
+            return SessionEndOutcome(message: notice.message, kind: notice.endKind)
         }
 
-        let profile = store.profile(id: notice.profileID)!
+        let errInfo = notice.errInfoCode ?? extractErrInfo(from: notice.message)
+        var report: RemoteSessionReport?
+        if profile.os == "linux" {
+            let discovered = await Task.detached {
+                RemoteDisplayRecovery.discoverFailure(profile)
+            }.value
+            if case .success(let r) = discovered { report = r }
+        }
+
         let preset = RemoteDisplayRecovery.chooseRecovery(
             errInfo: errInfo,
             report: report,
@@ -162,7 +216,10 @@ enum SessionCoordinator {
 
         var fixSummary: String?
         if profile.settings.smartReconnect, profile.os == "linux", preset != .none {
-            switch RemoteDisplayRecovery.apply(preset, profile: profile) {
+            let applied = await Task.detached {
+                RemoteDisplayRecovery.apply(preset, profile: profile)
+            }.value
+            switch applied {
             case .failure(let err):
                 fixSummary = "Could not auto-fix: \(err.message)"
             case .success(let detail):
@@ -229,18 +286,22 @@ enum SessionCoordinator {
     }
 
     private static func healBeforeConnect(profile: HostProfile) async -> String? {
-        let report: RemoteSessionReport?
-        switch RemoteDisplayRecovery.discoverFailure(profile) {
-        case .failure: report = nil
-        case .success(let r): report = r
-        }
+        let report: RemoteSessionReport? = await Task.detached {
+            switch RemoteDisplayRecovery.discoverFailure(profile) {
+            case .failure: return nil
+            case .success(let r): return r
+            }
+        }.value
         let preset = RemoteDisplayRecovery.chooseRecovery(
             errInfo: profile.health.lastFailureSummary.flatMap { extractErrInfo(from: $0) },
             report: report,
             failureCount: profile.health.consecutiveFailures
         )
         guard preset != .none else { return nil }
-        switch RemoteDisplayRecovery.apply(preset, profile: profile) {
+        let applied = await Task.detached {
+            RemoteDisplayRecovery.apply(preset, profile: profile)
+        }.value
+        switch applied {
         case .failure: return nil
         case .success(let detail):
             var msg = RemoteDisplayRecovery.plainRecoveryLabel(preset)

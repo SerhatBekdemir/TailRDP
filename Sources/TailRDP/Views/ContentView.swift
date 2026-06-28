@@ -5,6 +5,7 @@ struct ContentView: View {
     @EnvironmentObject var tailscale: TailscaleService
     @EnvironmentObject var launcher: RDPLauncher
     @State private var selection: String?
+    @State private var sessionEndGeneration: [String: UInt64] = [:]
 
     var body: some View {
         NavigationSplitView {
@@ -27,7 +28,7 @@ struct ContentView: View {
             if selection == nil { selectDefault() }
         }
         .onAppear {
-            store.merge(peers: tailscale.peers)
+            if !tailscale.peers.isEmpty { store.merge(peers: tailscale.peers) }
             if selection == nil { selectDefault() }
         }
         .onChange(of: launcher.sessionEndNotice) { _, notice in
@@ -45,12 +46,15 @@ struct ContentView: View {
                 )
             }
             Task {
+                let gen = (sessionEndGeneration[notice.profileID] ?? 0) + 1
+                sessionEndGeneration[notice.profileID] = gen
                 let outcome = await SessionCoordinator.handleSessionEnd(
                     notice: notice,
                     duration: notice.durationSeconds,
                     store: store,
                     launcher: launcher
                 )
+                guard sessionEndGeneration[notice.profileID] == gen else { return }
                 store.applySessionOutcome(profileID: notice.profileID, outcome: outcome)
                 launcher.clearSessionEndNotice(for: notice.profileID)
             }

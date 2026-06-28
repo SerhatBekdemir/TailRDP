@@ -5,8 +5,8 @@ import Combine
 @MainActor
 final class ProfileStore: ObservableObject {
     @Published var profiles: [HostProfile] = []
-    /// Short-lived green banner for clean disconnect — not sticky across host switches.
-    @Published var ephemeralBanner: EphemeralBanner?
+    /// Per-host flash banners (connect ack, disconnect) — survive host switches; not saved to disk.
+    @Published private(set) var flashBanners: [String: HostFlashBanner] = [:]
 
     private let url: URL
 
@@ -47,18 +47,29 @@ final class ProfileStore: ObservableObject {
         }
         switch outcome.kind {
         case .loggedOut:
-            ephemeralBanner = EphemeralBanner(hostID: profileID, text: "Disconnected.")
+            setFlashBanner(
+                profileID: profileID,
+                banner: HostFlashBanner(text: "Disconnected.", style: .success)
+            )
         case .paused, .crashed:
-            if ephemeralBanner?.hostID == profileID {
-                ephemeralBanner = nil
-            }
+            clearFlashBanner(profileID: profileID)
         }
     }
 
-    func clearEphemeralBanner(hostID: String) {
-        if ephemeralBanner?.hostID == hostID {
-            ephemeralBanner = nil
+    func flashBanner(for profileID: String) -> HostFlashBanner? {
+        flashBanners[profileID]
+    }
+
+    func setFlashBanner(profileID: String, banner: HostFlashBanner?) {
+        if let banner {
+            flashBanners[profileID] = banner
+        } else {
+            flashBanners.removeValue(forKey: profileID)
         }
+    }
+
+    func clearFlashBanner(profileID: String) {
+        flashBanners.removeValue(forKey: profileID)
     }
 
     func clearStickyBanner(profileID: String) {
@@ -85,7 +96,6 @@ final class ProfileStore: ObservableObject {
     /// Update online/address/os for known hosts; create defaults for new RDP
     /// candidates; mark vanished hosts offline.
     func merge(peers: [TailscalePeer]) {
-        guard !peers.isEmpty else { return }
         for peer in peers {
             if let i = profiles.firstIndex(where: { $0.id == peer.id }) {
                 profiles[i].online = peer.online
