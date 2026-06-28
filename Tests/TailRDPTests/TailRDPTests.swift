@@ -34,6 +34,19 @@ final class SessionEndClassifierTests: XCTestCase {
         let end = SessionEndClassifier.classify(loggedOut: false, stderr: "", exitCode: 42, reason: "exit")
         XCTAssertEqual(end.kind, .crashed)
     }
+
+    func testProductionRecordsJSONMatchesBuiltInCorpus() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/session-end-production-records.json")
+        let data = try Data(contentsOf: url)
+        let decoded = try JSONDecoder().decode([SessionEndProductionRecord].self, from: data)
+        XCTAssertEqual(decoded, SessionEndClassifier.productionRecords)
+    }
+
+    func testProductionRecordsClassifyCorrectly() {
+        XCTAssertEqual(SessionEndClassifier.verifyProductionRecords(), 0)
+    }
 }
 
 final class DiscoveryTests: XCTestCase {
@@ -46,13 +59,28 @@ final class DiscoveryTests: XCTestCase {
             id: "mac", hostName: "mac", dnsName: "mac.ts.net", os: "macOS",
             ipv4: "100.1.1.2", online: true, isSelf: false
         )
+        let android = TailscalePeer(
+            id: "phone", hostName: "phone", dnsName: "phone.ts.net", os: "android",
+            ipv4: "100.1.1.4", online: true, isSelf: false
+        )
         let selfPeer = TailscalePeer(
             id: "me", hostName: "me", dnsName: "me.ts.net", os: "macOS",
             ipv4: "100.1.1.3", online: true, isSelf: true
         )
         XCTAssertTrue(linux.isRDPCandidate)
         XCTAssertTrue(mac.isRDPCandidate)
+        XCTAssertFalse(android.isRDPCandidate)
         XCTAssertFalse(selfPeer.isRDPCandidate)
+    }
+
+    func testTailscaleMacOSNormalizesToCanonicalOS() {
+        let peer = TailscalePeer(
+            id: "mbp", hostName: "mbp", dnsName: "mbp.ts.net", os: "macos",
+            ipv4: "100.1.1.5", online: true, isSelf: false
+        )
+        XCTAssertTrue(peer.isRDPCandidate)
+        let profile = HostProfile.make(from: peer)
+        XCTAssertEqual(profile.os, "macOS")
     }
 }
 
@@ -317,6 +345,18 @@ final class ProfileStoreMergeTests: XCTestCase {
         store.merge(peers: [selfPeer])
         XCTAssertTrue(store.profiles.isEmpty)
     }
+
+    func testMergeSkipsAndroidPeer() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TailRDPTests-\(UUID().uuidString)/profiles.json")
+        let store = ProfileStore(testProfilesURL: url)
+        let android = TailscalePeer(
+            id: "phone", hostName: "phone", dnsName: "phone.ts.net", os: "android",
+            ipv4: "100.64.0.9", online: true, isSelf: false
+        )
+        store.merge(peers: [android])
+        XCTAssertTrue(store.profiles.isEmpty)
+    }
 }
 
 final class CredentialStoreTests: XCTestCase {
@@ -359,6 +399,8 @@ final class ProfileStoreFixtureTests: XCTestCase {
         let data = try Data(contentsOf: fixtureURL)
         let profiles = try JSONDecoder().decode([HostProfile].self, from: data)
         XCTAssertEqual(profiles.count, 40)
+        XCTAssertTrue(profiles.allSatisfy { HostOS.isAllowedProfile($0.os) })
+        XCTAssertFalse(profiles.contains { $0.os == "android" })
         XCTAssertTrue(profiles.contains { $0.os == "linux" && $0.online })
         XCTAssertTrue(profiles.contains { !$0.online })
         XCTAssertTrue(profiles.contains { $0.settings.width == 1366 && $0.settings.height == 768 })
@@ -446,6 +488,31 @@ final class ProfileStoreFixtureTests: XCTestCase {
         XCTAssertEqual(store.addManualHost(displayName: "Box", address: ""), "Address is required.")
         XCTAssertNil(store.addManualHost(displayName: "Box", address: "100.64.0.5"))
         XCTAssertEqual(store.addManualHost(displayName: "Box", address: "100.64.0.6"), "A host named \"Box\" already exists.")
+    }
+
+    func testLoadDropsNonRDPCapableProfiles() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TailRDPTests-\(UUID().uuidString)/profiles.json")
+        let invalid = HostProfile(
+            id: "phone", hostName: "phone", displayName: "Phone", address: "9.9.9.9", os: "android",
+            online: false, rdpUsername: "u", sshUsername: "u", rdpPort: 3389,
+            settings: .default, lastRemoteDir: ""
+        )
+        let valid = HostProfile(
+            id: "box", hostName: "box", displayName: "Box", address: "1.1.1.1", os: "linux",
+            online: true, rdpUsername: "u", sshUsername: "u", rdpPort: 3389,
+            settings: .default, lastRemoteDir: ""
+        )
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted]
+        let store = ProfileStore(testProfilesURL: url)
+        try enc.encode([invalid, valid]).write(to: url)
+        store.load()
+        XCTAssertEqual(store.profiles.count, 1)
+        XCTAssertEqual(store.profiles.first?.id, "box")
+        let saved = try JSONDecoder().decode([HostProfile].self, from: Data(contentsOf: url))
+        XCTAssertEqual(saved.count, 1)
+        XCTAssertEqual(saved.first?.id, "box")
     }
 }
 

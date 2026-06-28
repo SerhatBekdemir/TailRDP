@@ -139,6 +139,18 @@ When resuming Linux with `remoteSessionIDs.count > 1`, `HostDetailView` shows `R
 
 Lowercased hostname for tailnet peers, or lowercased display name for manual hosts. Must match `credentials.json` key.
 
+### Allowed host OS
+
+| OS | Source | RDP candidate |
+|----|--------|---------------|
+| `linux` | Tailscale / manual | yes |
+| `windows` | Tailscale / manual | yes |
+| `macOS` | Tailscale (`macos`) / manual | yes |
+| `other` | Manual only | yes |
+| `android`, `ios`, … | Tailscale | **no** — dropped on load, never merged |
+
+See `HostOS` in `Models/HostOS.swift`.
+
 ### Export format (`ProfileExportBundle`)
 
 JSON version 1: profiles array, ISO8601 timestamp. No passwords. Import merges by id; prompts for password re-entry.

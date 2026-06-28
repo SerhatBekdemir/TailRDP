@@ -100,7 +100,8 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
         hostName = try c.decode(String.self, forKey: .hostName)
         displayName = try c.decode(String.self, forKey: .displayName)
         address = try c.decode(String.self, forKey: .address)
-        os = try c.decode(String.self, forKey: .os)
+        let rawOS = try c.decode(String.self, forKey: .os)
+        os = HostOS.normalize(rawOS)?.rawValue ?? rawOS
         online = try c.decode(Bool.self, forKey: .online)
         rdpUsername = try c.decode(String.self, forKey: .rdpUsername)
         sshUsername = try c.decode(String.self, forKey: .sshUsername)
@@ -114,12 +115,13 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
 
     static func make(from peer: TailscalePeer) -> HostProfile {
         let user = UserDefaults.standard.defaultUsername
+        let os = HostOS.normalize(peer.os)?.rawValue ?? "other"
         var profile = HostProfile(
             id: peer.id,
             hostName: peer.hostName,
             displayName: peer.hostName,
             address: peer.ipv4,
-            os: peer.os,
+            os: os,
             online: peer.online,
             rdpUsername: user,
             sshUsername: user,

@@ -35,8 +35,16 @@ final class ProfileStore: ObservableObject {
     func load() {
         guard let data = try? Data(contentsOf: url),
               let list = try? JSONDecoder().decode([HostProfile].self, from: data) else { return }
-        profiles = list.map {
-            var p = $0
+        let allowed = list.compactMap { profile -> HostProfile? in
+            guard HostOS.isAllowedProfile(profile.os) else {
+                AppLog.session.info(
+                    "Dropped profile \(profile.id, privacy: .public) — OS \"\(profile.os, privacy: .public)\" is not RDP-capable"
+                )
+                CredentialStore.shared.remove(for: profile.id)
+                return nil
+            }
+            var p = profile
+            if let normalized = HostOS.normalize(p.os) { p.os = normalized.rawValue }
             p.normalizeCredentials()
             p.settings.normalizeDisplayOptions()
             if let text = p.stickyBanner?.text,
@@ -46,6 +54,9 @@ final class ProfileStore: ObservableObject {
             p.ensurePausedBanner()
             return p
         }
+        let dropped = list.count - allowed.count
+        profiles = allowed
+        if dropped > 0 { save() }
     }
 
     func save() {
@@ -212,7 +223,7 @@ final class ProfileStore: ObservableObject {
             if let i = profiles.firstIndex(where: { $0.id == peer.id }) {
                 profiles[i].online = peer.online
                 if !peer.ipv4.isEmpty { profiles[i].address = peer.ipv4 }
-                profiles[i].os = peer.os
+                if let os = HostOS.normalize(peer.os) { profiles[i].os = os.rawValue }
             } else if peer.isRDPCandidate {
                 profiles.append(HostProfile.make(from: peer))
             }

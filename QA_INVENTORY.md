@@ -1,6 +1,10 @@
 # TailRDP QA Inventory
 
-Sanitized production-scale fixture: `Tests/TailRDPTests/Fixtures/sanitized-production-profiles.json` (40 hosts, mixed OS/online/settings).
+Sanitized production-scale fixture: `Tests/TailRDPTests/Fixtures/sanitized-production-profiles.json` (40 hosts derived from 3 real linux profiles; android excluded).
+
+Session-end production records: `Tests/TailRDPTests/Fixtures/session-end-production-records.json` (12 curated classify cases; mirrored in `SessionEndClassifier.productionRecords`).
+
+Allowed host OS: `linux`, `windows`, `macOS`, `other` — phones/TV OS values are not RDP candidates.
 
 Run automated checks: `swift test && swift run TailRDP --verify-session`
 

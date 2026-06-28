@@ -6,8 +6,34 @@ public struct SessionEndClassification: Equatable {
     public let errInfoCode: String?
 }
 
+/// Observed session-end inputs from production RDP runs — each must classify to `expectedKind`.
+public struct SessionEndProductionRecord: Codable, Equatable, Sendable {
+    public let name: String
+    public let loggedOut: Bool
+    public let stderr: String
+    public let exitCode: Int32
+    public let reason: String
+    public let expectedKind: SessionEndKind
+}
+
 /// Pure classification of how an RDP client process ended — testable without SSH.
 public enum SessionEndClassifier {
+    /// Curated production observations; keep in sync with `Tests/.../session-end-production-records.json`.
+    public static let productionRecords: [SessionEndProductionRecord] = [
+        .init(name: "Mac window close (131) → paused", loggedOut: false, stderr: "", exitCode: 131, reason: "exit", expectedKind: .paused),
+        .init(name: "Remote close screen → paused (ERRINFO_LOGOFF_BY_USER)", loggedOut: false, stderr: "ERRINFO_LOGOFF_BY_USER", exitCode: 0, reason: "exit", expectedKind: .paused),
+        .init(name: "Another client took over → paused", loggedOut: false, stderr: "ERRINFO_DISCONNECTED_BY_OTHER_CONNECTION", exitCode: 0, reason: "exit", expectedKind: .paused),
+        .init(name: "TailRDP Disconnect → loggedOut", loggedOut: true, stderr: "", exitCode: 131, reason: "exit", expectedKind: .loggedOut),
+        .init(name: "Unexpected exit → crashed", loggedOut: false, stderr: "connection reset", exitCode: 42, reason: "exit", expectedKind: .crashed),
+        .init(name: "Auth failure (24) empty stderr → crashed", loggedOut: false, stderr: "", exitCode: 24, reason: "exit", expectedKind: .crashed),
+        .init(name: "AUTHENTICATION_FAILED in stderr → crashed", loggedOut: false, stderr: "AUTHENTICATION_FAILED", exitCode: 1, reason: "exit", expectedKind: .crashed),
+        .init(name: "Passphrase prompt in stderr → crashed", loggedOut: false, stderr: "Enter passphrase for key", exitCode: 1, reason: "exit", expectedKind: .crashed),
+        .init(name: "Signal without window-close code → crashed", loggedOut: false, stderr: "", exitCode: 0, reason: "signal", expectedKind: .crashed),
+        .init(name: "SIGINT window close (130) → paused", loggedOut: false, stderr: "", exitCode: 130, reason: "signal", expectedKind: .paused),
+        .init(name: "Clean exit zero → paused", loggedOut: false, stderr: "", exitCode: 0, reason: "exit", expectedKind: .paused),
+        .init(name: "Server shutdown ERRINFO → crashed", loggedOut: false, stderr: "ERRINFO_SERVER_SHUTDOWN", exitCode: 0, reason: "exit", expectedKind: .crashed),
+    ]
+
     public static func classify(
         loggedOut: Bool,
         stderr: String,
@@ -55,7 +81,7 @@ public enum SessionEndClassifier {
         }
         if exitCode != 0 {
             let message: String
-            if exitCode == 24 || stderr.contains("passphrase") || stderr.contains("AUTHENTICATION_FAILED") {
+            if exitCode == 24 || isKnownFailureExit(exitCode: exitCode, stderr: stderr) {
                 message = "Sign-in failed."
             } else {
                 message = "Connection ended unexpectedly (code \(exitCode))."
@@ -75,16 +101,28 @@ public enum SessionEndClassifier {
 
     public static func isClientWindowClosed(exitCode: Int32, reason: String, stderr: String) -> Bool {
         let windowCloseCodes: Set<Int32> = [130, 131, 143, 2, 3, 15]
-        if windowCloseCodes.contains(exitCode) { return true }
-        if reason == "signal", windowCloseCodes.contains(exitCode) { return true }
-        return false
+        return windowCloseCodes.contains(exitCode)
     }
 
-    /// Non-zero exits that indicate failure, not a paused window close.
-    private static func isKnownFailureExit(exitCode: Int32, stderr: String) -> Bool {
-        if exitCode == 24 { return true }
-        if stderr.contains("AUTHENTICATION_FAILED") || stderr.contains("passphrase") { return true }
-        return false
+    /// Run every production record through `classify`. Returns failure count.
+    @discardableResult
+    public static func verifyProductionRecords() -> Int {
+        var failures = 0
+        for record in productionRecords {
+            let kind = classify(
+                loggedOut: record.loggedOut,
+                stderr: record.stderr,
+                exitCode: record.exitCode,
+                reason: record.reason
+            ).kind
+            if kind == record.expectedKind {
+                print("OK  \(record.name)")
+            } else {
+                print("FAIL \(record.name) (got \(kind), expected \(record.expectedKind))")
+                failures += 1
+            }
+        }
+        return failures
     }
 
     /// Built-in checks for pause / logout / crash classification. Returns failure count.
@@ -96,20 +134,7 @@ public enum SessionEndClassifier {
             else { print("FAIL \(name)"); failures += 1 }
         }
 
-        check(classify(loggedOut: false, stderr: "", exitCode: 131, reason: "exit").kind == .paused,
-              "Mac window close (131) → paused")
-        check(classify(loggedOut: false, stderr: "ERRINFO_LOGOFF_BY_USER", exitCode: 0, reason: "exit").kind == .paused,
-              "Remote close screen → paused (initial)")
-        check(classify(loggedOut: true, stderr: "", exitCode: 131, reason: "exit").kind == .loggedOut,
-              "TailRDP Disconnect → loggedOut")
-        check(classify(loggedOut: false, stderr: "err", exitCode: 42, reason: "exit").kind == .crashed,
-              "Unexpected exit → crashed")
-        check(classify(loggedOut: false, stderr: "", exitCode: 24, reason: "exit").kind == .crashed,
-              "Auth failure (24) empty stderr → crashed")
-        check(classify(loggedOut: false, stderr: "", exitCode: 42, reason: "exit").kind == .crashed,
-              "Unexpected exit empty stderr → crashed")
-        check(classify(loggedOut: false, stderr: "", exitCode: 0, reason: "signal").kind == .crashed,
-              "Signal → crashed")
+        failures += verifyProductionRecords()
         check(HostStatusBanner.from(SessionEndOutcome(message: "paused", kind: .paused, actionLabel: "Resume")) != nil,
               "Paused outcome → sticky banner")
         check(HostStatusBanner.from(SessionEndOutcome(message: "lost", kind: .crashed, actionLabel: "Reconnect"))?.style == .error,
@@ -137,6 +162,14 @@ public enum SessionEndClassifier {
         if failures == 0 { print("All session logic checks passed.") }
         else { print("\(failures) check(s) failed.") }
         return failures
+    }
+
+    /// Non-zero exits that indicate failure, not a paused window close.
+    private static func isKnownFailureExit(exitCode: Int32, stderr: String) -> Bool {
+        if exitCode == 24 { return true }
+        let lower = stderr.lowercased()
+        if lower.contains("authentication_failed") || lower.contains("passphrase") { return true }
+        return false
     }
 
     private static func rdpErrorLabel(_ code: String) -> String {

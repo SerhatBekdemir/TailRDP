@@ -10,6 +10,6 @@ struct TailscalePeer: Identifiable, Equatable {
     let online: Bool
     let isSelf: Bool
 
-    /// All tailnet peers except this Mac appear in the sidebar; user configures RDP per host.
-    var isRDPCandidate: Bool { !isSelf }
+    /// Desktop tailnet peers (linux / windows / macOS / other) — excludes phones, TVs, etc.
+    var isRDPCandidate: Bool { HostOS.isTailscaleRDPCandidate(os: os, isSelf: isSelf) }
 }

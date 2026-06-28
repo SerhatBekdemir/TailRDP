@@ -1,0 +1,98 @@
+[
+  {
+    "name": "Mac window close (131) → paused",
+    "loggedOut": false,
+    "stderr": "",
+    "exitCode": 131,
+    "reason": "exit",
+    "expectedKind": "paused"
+  },
+  {
+    "name": "Remote close screen → paused (ERRINFO_LOGOFF_BY_USER)",
+    "loggedOut": false,
+    "stderr": "ERRINFO_LOGOFF_BY_USER",
+    "exitCode": 0,
+    "reason": "exit",
+    "expectedKind": "paused"
+  },
+  {
+    "name": "Another client took over → paused",
+    "loggedOut": false,
+    "stderr": "ERRINFO_DISCONNECTED_BY_OTHER_CONNECTION",
+    "exitCode": 0,
+    "reason": "exit",
+    "expectedKind": "paused"
+  },
+  {
+    "name": "TailRDP Disconnect → loggedOut",
+    "loggedOut": true,
+    "stderr": "",
+    "exitCode": 131,
+    "reason": "exit",
+    "expectedKind": "loggedOut"
+  },
+  {
+    "name": "Unexpected exit → crashed",
+    "loggedOut": false,
+    "stderr": "connection reset",
+    "exitCode": 42,
+    "reason": "exit",
+    "expectedKind": "crashed"
+  },
+  {
+    "name": "Auth failure (24) empty stderr → crashed",
+    "loggedOut": false,
+    "stderr": "",
+    "exitCode": 24,
+    "reason": "exit",
+    "expectedKind": "crashed"
+  },
+  {
+    "name": "AUTHENTICATION_FAILED in stderr → crashed",
+    "loggedOut": false,
+    "stderr": "AUTHENTICATION_FAILED",
+    "exitCode": 1,
+    "reason": "exit",
+    "expectedKind": "crashed"
+  },
+  {
+    "name": "Passphrase prompt in stderr → crashed",
+    "loggedOut": false,
+    "stderr": "Enter passphrase for key",
+    "exitCode": 1,
+    "reason": "exit",
+    "expectedKind": "crashed"
+  },
+  {
+    "name": "Signal without window-close code → crashed",
+    "loggedOut": false,
+    "stderr": "",
+    "exitCode": 0,
+    "reason": "signal",
+    "expectedKind": "crashed"
+  },
+  {
+    "name": "SIGINT window close (130) → paused",
+    "loggedOut": false,
+    "stderr": "",
+    "exitCode": 130,
+    "reason": "signal",
+    "expectedKind": "paused"
+  },
+  {
+    "name": "Clean exit zero → paused",
+    "loggedOut": false,
+    "stderr": "",
+    "exitCode": 0,
+    "reason": "exit",
+    "expectedKind": "paused"
+  },
+  {
+    "name": "Server shutdown ERRINFO → crashed",
+    "loggedOut": false,
+    "stderr": "ERRINFO_SERVER_SHUTDOWN",
+    "exitCode": 0,
+    "reason": "exit",
+    "expectedKind": "crashed"
+  }
+]
