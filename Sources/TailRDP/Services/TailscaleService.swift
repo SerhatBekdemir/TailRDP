@@ -75,8 +75,10 @@ final class TailscaleService: ObservableObject {
         guard generation == refreshGeneration else { return }
         isRefreshing = false
         if let parsed {
-            selfPeer = parsed.selfPeer
-            peers = parsed.peers
+            if parsed.selfPeer != selfPeer || parsed.peers != peers {
+                selfPeer = parsed.selfPeer
+                peers = parsed.peers
+            }
             lastError = nil
         } else {
             let err = stderr.trimmingCharacters(in: .whitespacesAndNewlines)

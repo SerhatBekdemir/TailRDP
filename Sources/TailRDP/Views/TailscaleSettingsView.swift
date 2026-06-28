@@ -99,6 +99,8 @@ struct TailscaleSettingsView: View {
                 tailscale.refresh()
             }
         }
+        .onChange(of: binaryOverride) { _, _ in DependencyChecker.invalidateCache() }
+        .onChange(of: freerdpOverride) { _, _ in DependencyChecker.invalidateCache() }
     }
 
     private func exportProfiles() {

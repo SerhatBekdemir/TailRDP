@@ -12,6 +12,7 @@ struct ContentView: View {
     @AppStorage(AppSettingsKey.dismissedDependencyWarning) private var dismissedDepWarning = false
     @AppStorage(AppSettingsKey.freerdpBinaryPath) private var freerdpOverride = ""
     @State private var showWizard = false
+    @Environment(\.scenePhase) private var scenePhase
 
     private var missingDependencyMessage: String? {
         var missing: [String] = []
@@ -70,6 +71,11 @@ struct ContentView: View {
                 .environmentObject(tailscale)
                 .environmentObject(store)
         }
+        .onChange(of: showWizard) { _, showing in
+            if !showing && !hasCompletedFirstRun {
+                showWizard = true
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showAboutWindow)) { _ in
             openWindow(id: "about")
         }
@@ -87,6 +93,11 @@ struct ContentView: View {
                 guard sessionEndGeneration[notice.profileID] == gen else { return }
                 store.applySessionOutcome(profileID: notice.profileID, outcome: outcome)
                 launcher.clearSessionEndNotice(for: notice.profileID)
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background || phase == .inactive {
+                store.flushPendingSave()
             }
         }
     }

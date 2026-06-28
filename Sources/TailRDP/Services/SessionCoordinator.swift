@@ -110,7 +110,13 @@ enum SessionCoordinator {
         case .paused:
             let resolved = await resolvePausedLoggedOutOrCrash(notice: notice, store: store)
             if resolved.kind == .crashed {
-                return await handleCrashEnd(notice: notice, duration: duration, used: used, store: store)
+                return await handleCrashEnd(
+                    notice: notice,
+                    duration: duration,
+                    used: used,
+                    store: store,
+                    prefetchedReport: resolved.report
+                )
             }
             if resolved.kind == .loggedOut {
                 store.update(id: notice.profileID) { p in
@@ -145,7 +151,7 @@ enum SessionCoordinator {
     }
 
     static func promoteCurrentSettings(profileID: String, store: ProfileStore) {
-        store.update(id: profileID) { p in
+        store.update(id: profileID, immediate: true) { p in
             p.lastWorking = LastWorkingSnapshot(settings: p.settings, savedAt: Date())
             p.sessionHealth = SessionHealth()
             p.stickyBanner = nil
@@ -170,7 +176,7 @@ enum SessionCoordinator {
                 return (err.message, true)
             case .success(let detail):
                 store.clearPausedSession(profileID: profileID)
-                store.update(id: profileID) { p in
+                store.update(id: profileID, immediate: true) { p in
                     var h = SessionHealth()
                     h.lastEndKind = .loggedOut
                     p.sessionHealth = h
@@ -186,7 +192,7 @@ enum SessionCoordinator {
 
         // Non-Linux: no SSH hook to log off a paused RDP session — clear local state only.
         store.clearPausedSession(profileID: profileID)
-        store.update(id: profileID) { p in
+        store.update(id: profileID, immediate: true) { p in
             var h = SessionHealth()
             h.lastEndKind = .loggedOut
             p.sessionHealth = h
@@ -206,40 +212,38 @@ enum SessionCoordinator {
     private struct PausedResolution: Equatable {
         var kind: SessionEndKind
         var sshUnknown: Bool = false
+        var report: RemoteSessionReport?
     }
 
     private static func resolvePausedLoggedOutOrCrash(
         notice: SessionEndNotice,
         store: ProfileStore
     ) async -> PausedResolution {
-        guard let profile = store.profile(id: notice.profileID), profile.os == "linux" else {
+        guard let profile = store.profile(id: notice.profileID), profile.isLinux else {
             return PausedResolution(kind: .paused)
         }
         try? await Task.sleep(for: .milliseconds(800))
 
-        let report = await Task.detached {
+        let reportResult = await Task.detached {
             RemoteDisplayRecovery.discoverFailure(profile)
         }.value
 
-        if case .success(let r) = report, RemoteDisplayRecovery.looksLikeRecentCrash(r) {
-            return PausedResolution(kind: .crashed)
+        guard case .success(let report) = reportResult else {
+            return PausedResolution(kind: .paused, sshUnknown: true)
         }
-
-        let active = await Task.detached {
-            RemoteDisplayRecovery.remoteSessionState(profile)
-        }.value
-        switch active {
-        case .active: return PausedResolution(kind: .paused)
-        case .inactive: return PausedResolution(kind: .loggedOut)
-        case .unknown: return PausedResolution(kind: .paused, sshUnknown: true)
+        if RemoteDisplayRecovery.looksLikeRecentCrash(report) {
+            return PausedResolution(kind: .crashed, report: report)
         }
+        let kind: SessionEndKind = report.remoteSessionIDs.isEmpty ? .loggedOut : .paused
+        return PausedResolution(kind: kind, report: report)
     }
 
     private static func handleCrashEnd(
         notice: SessionEndNotice,
         duration: TimeInterval,
         used: RDPSettings,
-        store: ProfileStore
+        store: ProfileStore,
+        prefetchedReport: RemoteSessionReport? = nil
     ) async -> SessionEndOutcome {
         guard let profile = store.profile(id: notice.profileID) else {
             return SessionEndOutcome(message: notice.message, kind: notice.endKind)
@@ -261,8 +265,8 @@ enum SessionCoordinator {
         }
 
         let errInfo = notice.errInfoCode ?? extractErrInfo(from: notice.message)
-        var report: RemoteSessionReport?
-        if profile.os == "linux" {
+        var report = prefetchedReport
+        if report == nil, profile.isLinux {
             let discovered = await Task.detached {
                 RemoteDisplayRecovery.discoverFailure(profile)
             }.value

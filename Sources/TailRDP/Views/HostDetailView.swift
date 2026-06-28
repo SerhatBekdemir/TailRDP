@@ -38,7 +38,7 @@ struct HostDetailView: View {
             Divider()
             content
         }
-        .onChange(of: profile) { _, _ in store.save() }
+        .onChange(of: profile) { _, _ in store.scheduleSave() }
         .onChange(of: launcher.isActive(profile.id)) { _, active in
             pauseClearTask?.cancel()
             pauseClearTask = nil
@@ -258,7 +258,7 @@ struct HostDetailView: View {
         p.rdpUsername = sheetUsername
         p.normalizeCredentials()
         profile = p
-        store.update(id: profile.id) { stored in
+        store.update(id: profile.id, immediate: true) { stored in
             stored.rdpUsername = p.rdpUsername
             stored.sshUsername = p.sshUsername
             if stored.stickyBanner?.needsCredentials == true {

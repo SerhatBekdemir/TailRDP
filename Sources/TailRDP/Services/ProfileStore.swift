@@ -9,12 +9,17 @@ final class ProfileStore: ObservableObject {
     @Published private(set) var flashBanners: [String: HostFlashBanner] = [:]
 
     private var flashExpiryTasks: [String: Task<Void, Never>] = [:]
+    private var pendingSaveTask: Task<Void, Never>?
     private static let flashAutoDismissSeconds: UInt64 = 5
+    private static let saveDebounceNanoseconds: UInt64 = 350_000_000
     private static let staleBannerPhrases = ["authenticate", "Sign-in failed", "re-save"]
 
     private let url: URL
+    /// Production debounces disk writes; tests persist immediately.
+    private let debounceSaves: Bool
 
     init() {
+        debounceSaves = true
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("TailRDP", isDirectory: true)
@@ -25,6 +30,7 @@ final class ProfileStore: ObservableObject {
 
     /// Isolated store for unit tests — does not load Application Support profiles.
     init(testProfilesURL: URL) {
+        debounceSaves = false
         url = testProfilesURL
         try? FileManager.default.createDirectory(
             at: testProfilesURL.deletingLastPathComponent(),
@@ -61,8 +67,32 @@ final class ProfileStore: ObservableObject {
     }
 
     func save() {
+        pendingSaveTask?.cancel()
+        pendingSaveTask = nil
+        persist()
+    }
+
+    /// Coalesce rapid profile edits into a single disk write.
+    func scheduleSave() {
+        guard debounceSaves else { save(); return }
+        pendingSaveTask?.cancel()
+        pendingSaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.saveDebounceNanoseconds)
+            guard !Task.isCancelled, let self else { return }
+            self.pendingSaveTask = nil
+            self.persist()
+        }
+    }
+
+    /// Flush a pending debounced save (e.g. before backgrounding).
+    func flushPendingSave() {
+        guard pendingSaveTask != nil else { return }
+        save()
+    }
+
+    private func persist() {
         let enc = JSONEncoder()
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        enc.outputFormatting = [.sortedKeys]
         do {
             let data = try enc.encode(profiles)
             try data.write(to: url, options: .atomic)
@@ -73,26 +103,17 @@ final class ProfileStore: ObservableObject {
 
     func profile(id: String) -> HostProfile? { profiles.first { $0.id == id } }
 
-    func update(id: String, _ transform: (inout HostProfile) -> Void) {
+    func update(id: String, immediate: Bool = false, _ transform: (inout HostProfile) -> Void) {
         guard let i = profiles.firstIndex(where: { $0.id == id }) else { return }
         transform(&profiles[i])
-        save()
+        if immediate { save() } else { scheduleSave() }
     }
 
     func applySessionOutcome(profileID: String, outcome: SessionEndOutcome) {
-        update(id: profileID) { p in
+        // Session health is already updated in SessionCoordinator.handleSessionEnd.
+        update(id: profileID, immediate: true) { p in
             p.stickyBanner = HostStatusBanner.from(outcome)
-            switch outcome.kind {
-            case .loggedOut:
-                var h = SessionHealth()
-                h.lastEndKind = .loggedOut
-                p.sessionHealth = h
-            case .paused, .crashed:
-                var h = p.health
-                h.lastEndKind = outcome.kind
-                p.sessionHealth = h
-                if outcome.kind == .paused { p.ensurePausedBanner() }
-            }
+            if outcome.kind == .paused { p.ensurePausedBanner() }
         }
         switch outcome.kind {
         case .loggedOut:
@@ -216,20 +237,36 @@ final class ProfileStore: ObservableObject {
     /// Update online/address/os for known hosts; create defaults for new RDP
     /// candidates; mark vanished hosts offline.
     func merge(peers: [TailscalePeer]) {
+        var dirty = false
+        let indexByID = Dictionary(uniqueKeysWithValues: profiles.enumerated().map { ($0.element.id, $0.offset) })
+
         for peer in peers {
-            if let i = profiles.firstIndex(where: { $0.id == peer.id }) {
-                profiles[i].online = peer.online
-                if !peer.ipv4.isEmpty { profiles[i].address = peer.ipv4 }
-                if let os = HostOS.normalize(peer.os) { profiles[i].os = os.rawValue }
+            if let i = indexByID[peer.id] {
+                if profiles[i].online != peer.online {
+                    profiles[i].online = peer.online
+                    dirty = true
+                }
+                if !peer.ipv4.isEmpty, profiles[i].address != peer.ipv4 {
+                    profiles[i].address = peer.ipv4
+                    dirty = true
+                }
+                if let os = HostOS.normalize(peer.os), profiles[i].os != os.rawValue {
+                    profiles[i].os = os.rawValue
+                    dirty = true
+                }
             } else if peer.isRDPCandidate {
                 profiles.append(HostProfile.make(from: peer))
+                dirty = true
             }
         }
-        let ids = Set(peers.map { $0.id })
+        let ids = Set(peers.map(\.id))
         for i in profiles.indices where !ids.contains(profiles[i].id) {
-            profiles[i].online = false
+            if profiles[i].online {
+                profiles[i].online = false
+                dirty = true
+            }
         }
-        save()
+        if dirty { scheduleSave() }
     }
 
     /// Export profiles as JSON (passwords stay in credentials.json — re-enter after import on another Mac).

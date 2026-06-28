@@ -24,6 +24,7 @@ struct FileTransferView: View {
     @State private var busy = false
     @State private var status = ""
     @State private var statusIsError = false
+    @State private var remoteLoadTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -246,12 +247,14 @@ struct FileTransferView: View {
     }
 
     private func loadRemote() {
+        remoteLoadTask?.cancel()
         busy = true
         remoteError = nil
         let p = profile
         let dir = remoteDir
-        Task.detached(priority: .userInitiated) {
+        remoteLoadTask = Task {
             let result = SFTPService.listRemote(p, path: dir)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 busy = false
                 switch result {

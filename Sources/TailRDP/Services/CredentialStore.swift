@@ -40,7 +40,12 @@ final class CredentialStore {
         return passwords[id]
     }
 
-    func hasPassword(for id: String) -> Bool { !(password(for: id)?.isEmpty ?? true) }
+    func hasPassword(for id: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let pwd = passwords[id] else { return false }
+        return !pwd.isEmpty
+    }
 
     @discardableResult
     func set(_ password: String, for id: String) -> Bool {

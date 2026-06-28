@@ -14,10 +14,13 @@ enum RemoteScriptLoader {
         .recover: "f750317530924db0b2590c5f9189388435a3cae829723fd78c010d3c903e084e",
         .report: "efd498428b39dcdcf691d6d5269c88c091f59a12c3674747f3f7bc72a24f7ae8",
     ]
+    private static var cache: [Script: String] = [:]
 
     static func load(_ script: Script) -> String {
+        if let cached = cache[script] { return cached }
         for source in [bundledContents, sourceTreeContents] {
             if let text = source(script), verify(text, script: script) {
+                cache[script] = text
                 return text
             }
         }

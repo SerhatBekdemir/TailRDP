@@ -28,6 +28,7 @@ struct FirstRunWizardView: View {
             footer
         }
         .frame(width: 560, height: 480)
+        .interactiveDismissDisabled(!hasCompletedFirstRun)
     }
 
     private var progressBar: some View {
