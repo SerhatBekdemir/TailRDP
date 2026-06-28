@@ -17,6 +17,12 @@ struct HostDetailView: View {
     @State private var sessionPickerIDs: [String]?
     @State private var showSessionPicker = false
     @State private var pendingResuming = false
+    @State private var showCredentialsSheet = false
+    @State private var credentialsMessage: String?
+    @State private var sheetUsername = ""
+    @State private var sheetPassword = ""
+    @State private var connectAfterCredentials = false
+    @State private var pauseClearTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,7 +40,19 @@ struct HostDetailView: View {
         }
         .onChange(of: profile) { _, _ in store.save() }
         .onChange(of: launcher.isActive(profile.id)) { _, active in
-            if active { store.clearFlashBanner(profileID: profile.id) }
+            pauseClearTask?.cancel()
+            pauseClearTask = nil
+            if active {
+                store.clearFlashBanner(profileID: profile.id)
+                pauseClearTask = Task {
+                    try? await Task.sleep(for: .seconds(SessionHealth.establishedSessionThreshold))
+                    guard !Task.isCancelled, launcher.isActive(profile.id) else { return }
+                    store.clearPausedSession(profileID: profile.id)
+                    if let updated = store.profile(id: profile.id) {
+                        profile = updated
+                    }
+                }
+            }
         }
         .safeAreaInset(edge: .bottom) { bannerView }
         .sheet(isPresented: $showSessionPicker) {
@@ -54,12 +72,27 @@ struct HostDetailView: View {
                 )
             }
         }
+        .sheet(isPresented: $showCredentialsSheet) {
+            CredentialsSheet(
+                hostName: profile.displayName,
+                message: credentialsMessage,
+                username: $sheetUsername,
+                password: $sheetPassword,
+                connectLabel: connectAfterCredentials ? "Save & Connect" : "Save",
+                onConfirm: confirmCredentials,
+                onCancel: cancelCredentials
+            )
+        }
     }
 
     @ViewBuilder private var content: some View {
         switch tab {
-        case .connection: ConnectionSettingsView(profile: $profile)
-        case .files:      FileTransferView(profile: $profile)
+        case .connection:
+            ConnectionSettingsView(profile: $profile) {
+                presentCredentials(message: nil, connectAfter: false)
+            }
+        case .files:
+            FileTransferView(profile: $profile)
         }
     }
 
@@ -110,7 +143,7 @@ struct HostDetailView: View {
             } label: {
                 if isConnecting {
                     ProgressView().controlSize(.small).frame(minWidth: 90)
-                } else if let actionLabel = profile.stickyBanner?.actionLabel {
+                } else if let actionLabel = profile.stickyBanner?.actionLabel, !profile.stickyBanner!.needsCredentials {
                     Label(actionLabel, systemImage: "play.fill")
                         .frame(minWidth: 90)
                 } else {
@@ -130,6 +163,7 @@ struct HostDetailView: View {
         }
         if !profile.online { return "Set an address to connect" }
         if profile.stickyBanner?.style == .paused { return "Resume your paused session" }
+        if profile.stickyBanner?.needsCredentials == true { return "Update your saved sign-in" }
         if profile.stickyBanner?.style == .error { return "Reconnect after the last problem" }
         if profile.lastWorking != nil { return "Connect using your last good settings" }
         return "Connect"
@@ -151,7 +185,9 @@ struct HostDetailView: View {
                         text: stickyDisplayText(sticky),
                         style: StatusBannerView.Style(hostStatus: sticky.style),
                         actionLabel: sticky.actionLabel,
-                        onAction: sticky.actionLabel != nil ? connect : nil,
+                        onAction: sticky.needsCredentials
+                            ? { presentCredentials(message: sticky.text, connectAfter: true) }
+                            : (sticky.actionLabel != nil ? connect : nil),
                         onDismiss: { store.clearStickyBanner(profileID: profile.id) }
                     )
                 }
@@ -193,17 +229,65 @@ struct HostDetailView: View {
     }
 
     private func connect() {
-        guard CredentialStore.shared.hasPassword(for: profile.id) else {
-            tab = .connection
-            store.setFlashBanner(
-                profileID: profile.id,
-                banner: HostFlashBanner(
-                    text: "Set a password in the Connection tab first.",
-                    style: .error
-                )
-            )
+        if profile.stickyBanner?.needsCredentials == true {
+            presentCredentials(message: profile.stickyBanner?.text, connectAfter: true)
             return
         }
+        guard hasSavedCredentials else {
+            presentCredentials(message: nil, connectAfter: true)
+            return
+        }
+        proceedToConnect()
+    }
+
+    private var hasSavedCredentials: Bool {
+        CredentialStore.shared.hasPassword(for: profile.id)
+            && !profile.rdpUsernameForConnect.isEmpty
+    }
+
+    private func presentCredentials(message: String?, connectAfter: Bool) {
+        credentialsMessage = message
+        connectAfterCredentials = connectAfter
+        sheetUsername = profile.rdpUsername
+        sheetPassword = ""
+        showCredentialsSheet = true
+    }
+
+    private func confirmCredentials() {
+        var p = profile
+        p.rdpUsername = sheetUsername
+        p.normalizeCredentials()
+        profile = p
+        store.update(id: profile.id) { stored in
+            stored.rdpUsername = p.rdpUsername
+            stored.sshUsername = p.sshUsername
+            if stored.stickyBanner?.needsCredentials == true {
+                stored.sessionHealth = SessionHealth()
+                stored.stickyBanner = nil
+            }
+        }
+        guard CredentialStore.shared.set(sheetPassword, for: profile.id) else {
+            credentialsMessage = "Could not save sign-in to Keychain."
+            return
+        }
+        showCredentialsSheet = false
+        credentialsMessage = nil
+        if let updated = store.profile(id: profile.id) {
+            profile = updated
+        }
+        if connectAfterCredentials {
+            proceedToConnect()
+        }
+    }
+
+    private func cancelCredentials() {
+        showCredentialsSheet = false
+        credentialsMessage = nil
+        connectAfterCredentials = false
+        isConnecting = false
+    }
+
+    private func proceedToConnect() {
         let resuming = profile.stickyBanner?.style == .paused
             || profile.health.lastEndKind == .paused
 
@@ -249,12 +333,15 @@ struct HostDetailView: View {
                 profile = updated
             }
             if result.isError {
-                store.setFlashBanner(
-                    profileID: profile.id,
-                    banner: HostFlashBanner(text: result.message, style: .error)
-                )
+                if result.message.contains("No saved sign-in") {
+                    presentCredentials(message: nil, connectAfter: true)
+                } else {
+                    store.setFlashBanner(
+                        profileID: profile.id,
+                        banner: HostFlashBanner(text: result.message, style: .error)
+                    )
+                }
             } else {
-                store.clearStickyBanner(profileID: profile.id)
                 store.setFlashBanner(
                     profileID: profile.id,
                     banner: HostFlashBanner(

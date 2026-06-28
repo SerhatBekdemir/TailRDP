@@ -35,14 +35,26 @@ final class ProfileStore: ObservableObject {
     func load() {
         guard let data = try? Data(contentsOf: url),
               let list = try? JSONDecoder().decode([HostProfile].self, from: data) else { return }
-        profiles = list
+        profiles = list.map {
+            var p = $0
+            p.normalizeCredentials()
+            if let text = p.stickyBanner?.text,
+               text.contains("authenticate") || text.contains("Sign-in failed") || text.contains("re-save") {
+                p.stickyBanner = nil
+            }
+            p.ensurePausedBanner()
+            return p
+        }
     }
 
     func save() {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? enc.encode(profiles) {
-            try? data.write(to: url, options: .atomic)
+        do {
+            let data = try enc.encode(profiles)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            AppLog.session.error("Failed to save profiles: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -57,6 +69,21 @@ final class ProfileStore: ObservableObject {
     func applySessionOutcome(profileID: String, outcome: SessionEndOutcome) {
         update(id: profileID) { p in
             p.stickyBanner = HostStatusBanner.from(outcome)
+            switch outcome.kind {
+            case .loggedOut:
+                var h = SessionHealth()
+                h.lastEndKind = .loggedOut
+                p.sessionHealth = h
+            case .paused:
+                var h = p.health
+                h.lastEndKind = .paused
+                p.sessionHealth = h
+                p.ensurePausedBanner()
+            case .crashed:
+                var h = p.health
+                h.lastEndKind = .crashed
+                p.sessionHealth = h
+            }
         }
         switch outcome.kind {
         case .loggedOut:
@@ -99,6 +126,18 @@ final class ProfileStore: ObservableObject {
     func clearStickyBanner(profileID: String) {
         update(id: profileID) { p in
             p.stickyBanner = nil
+        }
+    }
+
+    /// Clear pause state when the user reconnects or ends the remote session.
+    func clearPausedSession(profileID: String) {
+        update(id: profileID) { p in
+            p.stickyBanner = nil
+            if p.health.lastEndKind == .paused {
+                var h = p.health
+                h.lastEndKind = nil
+                p.sessionHealth = h
+            }
         }
     }
 
@@ -199,10 +238,16 @@ final class ProfileStore: ObservableObject {
         for profile in bundle.profiles {
             if merge, profiles.contains(where: { $0.id == profile.id }) {
                 if let i = profiles.firstIndex(where: { $0.id == profile.id }) {
+                    let local = profiles[i]
                     var merged = profile
-                    merged.online = profiles[i].online
-                    if profiles[i].address.isEmpty == false, profile.address.isEmpty {
-                        merged.address = profiles[i].address
+                    merged.online = local.online
+                    if local.address.isEmpty == false, profile.address.isEmpty {
+                        merged.address = local.address
+                    }
+                    merged.stickyBanner = local.stickyBanner
+                    merged.sessionHealth = local.sessionHealth
+                    if local.lastWorking != nil {
+                        merged.lastWorking = local.lastWorking
                     }
                     profiles[i] = merged
                     imported += 1

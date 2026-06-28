@@ -1,61 +1,102 @@
 # TailRDP
 
-Native macOS (SwiftUI) RDP client for a Tailscale network. Discover tailnet
-machines, tune connection settings, connect, and transfer files — a thin wrapper
-around FreeRDP + SSH/SCP.
+Native macOS (SwiftUI) RDP client for [Tailscale](https://tailscale.com) tailnets. Discover machines on your tailnet, tune per-host connection settings, connect via FreeRDP, transfer files over SSH, and manage Linux GNOME remote-desktop sessions intelligently.
 
-## Quick start (users)
+**Bundle ID:** `app.tailrdp` · **Platform:** macOS 15+, Apple Silicon (arm64) · **License:** [Apache 2.0](LICENSE)
 
-**Prerequisites** (install separately):
+---
 
-- macOS 15+ on Apple Silicon (arm64)
-- [Tailscale](https://tailscale.com/download) — signed in to your tailnet
-- FreeRDP — `brew install freerdp` (provides `sdl-freerdp`)
-- SSH keys (optional) — for file transfer and Linux session auto-recovery
+## Documentation
 
-**First launch:**
+| Document | Audience | Contents |
+|----------|----------|----------|
+| [USER_GUIDE.md](USER_GUIDE.md) | Users | Install, connect, file transfer, Linux sessions, troubleshooting |
+| [HANDOVER.md](HANDOVER.md) | Developers | Architecture, session lifecycle, key files, verify commands |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributors | Build, test, CI, remote scripts, conventions |
+| [SECURITY.md](SECURITY.md) | Everyone | Credentials, threat model, remote script trust |
+| [CHANGELOG.md](CHANGELOG.md) | Everyone | Release and milestone history |
 
-1. Build or open `TailRDP.app` (unsigned builds: right-click → **Open** the first time).
-2. Complete the setup wizard: verify Tailscale + FreeRDP, set your default username, refresh the tailnet.
-3. Select a machine in the sidebar, open **Connection**, save the RDP password (stored in Keychain on this Mac).
-4. Click **Connect**.
+---
 
-All tailnet peers appear in the sidebar (Linux, Windows, macOS, Android). Only
-hosts running an RDP server can be connected to — see [USER_GUIDE.md](USER_GUIDE.md).
+## Quick start
 
-Passwords are stored in the macOS Keychain (`app.tailrdp`) and passed to FreeRDP
-via stdin (`/from-stdin:force`), never on the command line.
+### Prerequisites
 
-## Build (developers)
+| Component | Purpose | Install |
+|-----------|---------|---------|
+| macOS 15+ (arm64) | Host OS | — |
+| [Tailscale](https://tailscale.com/download) | Tailnet discovery | App or `brew install tailscale` |
+| FreeRDP | RDP client (`sdl-freerdp`) | `brew install freerdp` |
+| SSH keys (optional) | File transfer, Linux auto-recovery | `ssh-copy-id user@host` |
+
+TailRDP does **not** bundle Tailscale or FreeRDP.
+
+### Build and run
 
 ```sh
-./build.sh              # arm64 release → TailRDP.app + dist/TailRDP.app
-INSTALL=1 ./build.sh    # also copy to /Applications
-swift test              # unit tests
-swift run TailRDP --verify-session   # session logic smoke test
+./build.sh                    # release build → TailRDP.app + dist/TailRDP.app
+INSTALL=1 ./build.sh          # also install to /Applications
+swift run TailRDP               # debug run from source
+swift run TailRDP --verify-session   # session logic smoke test (no UI)
 ```
 
-Requires Swift toolchain, macOS 15 SDK.
+**First launch:** unsigned builds require Finder → right-click `TailRDP.app` → **Open** once.
 
-## Architecture
+**First use:** complete the setup wizard (Tailscale + FreeRDP check, default username, tailnet refresh), select a host, save the RDP password in the **Connection** tab, click **Connect**.
+
+Passwords live in the macOS Keychain (`app.tailrdp`) and are passed to FreeRDP via `/p:` at launch — not stored in profile JSON. See [SECURITY.md](SECURITY.md).
+
+---
+
+## Features (summary)
+
+- **Tailnet discovery** — all peers except self; manual host add/delete
+- **Offline connect** — use saved address when Tailscale reports offline
+- **Per-host settings** — resolution, codec, network profile, clipboard, smart reconnect
+- **Session semantics** — pause vs logout vs crash; sticky and flash banners
+- **Linux GNOME recovery** — SSH scripts for stuck Wayland sessions, adaptive resume delay
+- **File transfer** — SFTP browser with remote `$HOME` detection
+- **Profile export/import** — settings JSON (passwords re-entered after import)
+- **Structured logging** — OSLog subsystem `app.tailrdp` (Console.app)
+
+---
+
+## Project layout
 
 ```
 Sources/TailRDP/
-  Models/    AppSettings, HostProfile, RDPSettings, SessionHealth, TailscalePeer
-  Services/  CredentialStore (Keychain), DependencyChecker, ProcessRunner,
-             ProfileStore, RDPLauncher, RemoteDisplayRecovery,
-             SessionCoordinator, SFTPService, TailscaleService
-  Views/     ContentView, FirstRunWizardView, PeerSidebar, HostDetailView,
-             ConnectionSettingsView, FileTransferView, StatusBannerView
-  Logic/     SessionEndClassifier
+  Models/         HostProfile, RDPSettings, SessionHealth, ProfileExport, …
+  Services/       ProfileStore, RDPLauncher, SessionCoordinator,
+                  RemoteDisplayRecovery, RemoteScriptLoader, CredentialStore,
+                  TailscaleService, SFTPService, AppLog, …
+  Views/          SwiftUI (ContentView, HostDetailView, …)
+  Logic/          SessionEndClassifier (pure, testable)
+  RemoteScripts/  Pinned SSH scripts (terminate, recover, report)
 Tests/TailRDPTests/
+.github/workflows/ci.yml
+build.sh
+Resources/        App icon assets
 ```
 
-- Profiles: `~/Library/Application Support/TailRDP/profiles.json`
-- Passwords: Keychain service `app.tailrdp`, account = profile id
-- Bundle ID: `app.tailrdp`
+**On disk (runtime):**
 
-See [HANDOVER.md](HANDOVER.md) for phased implementation notes and deferred items.
+- Profiles: `~/Library/Application Support/TailRDP/profiles.json`
+- Passwords: Keychain service `app.tailrdp`, account = profile `id`
+
+---
+
+## Verify (developers)
+
+```sh
+swift build
+swift test                        # requires full Xcode
+swift run TailRDP --verify-session
+./build.sh                        # includes --verify-session gate
+```
+
+CI (when pushed to GitHub): build, test, and `--verify-session` on `macos-15`. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
 
 ## License
 

@@ -3,7 +3,7 @@ import Foundation
 /// Orchestrates connect: last-good settings, crash-only recovery, plain-language status.
 @MainActor
 enum SessionCoordinator {
-    private static let successThreshold: TimeInterval = 45
+    private static let successThreshold: TimeInterval = SessionHealth.establishedSessionThreshold
 
     static func connect(
         profileID: String,
@@ -55,7 +55,9 @@ enum SessionCoordinator {
                 var h = p.health
                 h.consecutiveFailures += 1
                 h.lastFailureSummary = err
-                h.lastEndKind = .crashed
+                if !isLinuxResume {
+                    h.lastEndKind = .crashed
+                }
                 if isLinuxResume {
                     h.linuxResumeDelayMs = min(
                         SessionHealth.maxLinuxResumeDelayMs,
@@ -110,14 +112,19 @@ enum SessionCoordinator {
             if resolved.kind == .crashed {
                 return await handleCrashEnd(notice: notice, duration: duration, used: used, store: store)
             }
+            if resolved.kind == .loggedOut {
+                store.update(id: notice.profileID) { p in
+                    var h = SessionHealth()
+                    h.lastEndKind = .loggedOut
+                    p.sessionHealth = h
+                }
+                return SessionEndOutcome(message: "Remote session ended.", kind: .loggedOut)
+            }
             recordSuccessfulSettings(profileID: notice.profileID, used: used, duration: duration, store: store)
             store.update(id: notice.profileID) { p in
                 var h = SessionHealth()
-                h.lastEndKind = resolved.kind
+                h.lastEndKind = .paused
                 p.sessionHealth = h
-            }
-            if resolved.kind == .loggedOut {
-                return SessionEndOutcome(message: "Disconnected.", kind: .loggedOut)
             }
             let sshNote = resolved.sshUnknown
                 ? "SSH is unavailable. The remote session may still be running."
@@ -141,6 +148,7 @@ enum SessionCoordinator {
         store.update(id: profileID) { p in
             p.lastWorking = LastWorkingSnapshot(settings: p.settings, savedAt: Date())
             p.sessionHealth = SessionHealth()
+            p.stickyBanner = nil
         }
     }
 
@@ -161,7 +169,7 @@ enum SessionCoordinator {
             case .failure(let err):
                 return (err.message, true)
             case .success(let detail):
-                store.clearStickyBanner(profileID: profileID)
+                store.clearPausedSession(profileID: profileID)
                 store.update(id: profileID) { p in
                     var h = SessionHealth()
                     h.lastEndKind = .loggedOut
@@ -177,7 +185,7 @@ enum SessionCoordinator {
         }
 
         // Non-Linux: no SSH hook to log off a paused RDP session — clear local state only.
-        store.clearStickyBanner(profileID: profileID)
+        store.clearPausedSession(profileID: profileID)
         store.update(id: profileID) { p in
             var h = SessionHealth()
             h.lastEndKind = .loggedOut
@@ -245,9 +253,10 @@ enum SessionCoordinator {
                 p.sessionHealth = h
             }
             return SessionEndOutcome(
-                message: notice.message,
+                message: "Sign-in failed. Update your username or password.",
                 kind: .crashed,
-                actionLabel: "Reconnect"
+                actionLabel: "Update sign-in",
+                needsCredentials: true
             )
         }
 
@@ -371,6 +380,7 @@ enum SessionCoordinator {
 
     private static func isAuthenticationFailure(_ notice: SessionEndNotice) -> Bool {
         notice.message.contains("Could not authenticate")
+            || notice.message.contains("Sign-in failed")
             || notice.message.contains("AUTHENTICATION_FAILED")
     }
 }

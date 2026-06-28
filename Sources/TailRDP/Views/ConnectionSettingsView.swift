@@ -2,13 +2,11 @@ import SwiftUI
 
 struct ConnectionSettingsView: View {
     @Binding var profile: HostProfile
+    var onManageCredentials: () -> Void
     @EnvironmentObject var store: ProfileStore
     @EnvironmentObject var launcher: RDPLauncher
 
-    @State private var password = ""
-    @State private var showPassword = false
-    @State private var hasStored = false
-    @State private var justSaved = false
+    @State private var hasStoredPassword = false
     @State private var advancedStatus: String?
     @State private var isAdvancedBusy = false
     @State private var showAdvanced = false
@@ -30,57 +28,18 @@ struct ConnectionSettingsView: View {
                 Stepper("Port: \(profile.rdpPort)", value: $profile.rdpPort, in: 1...65535)
             }
 
-            Section("Credentials") {
-                TextField("Username", text: $profile.rdpUsername)
-                HStack {
-                    Group {
-                        if showPassword {
-                            TextField("Password", text: $password)
-                        } else {
-                            SecureField("Password", text: $password)
-                        }
-                    }
-                    Button {
-                        showPassword.toggle()
-                    } label: {
-                        Image(systemName: showPassword ? "eye.slash" : "eye")
-                    }
-                    .buttonStyle(.borderless)
-                    .help(showPassword ? "Hide" : "Show")
+            Section {
+                if hasStoredPassword {
+                    Label("Sign-in saved on this Mac", systemImage: "checkmark.seal.fill")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("First Connect will ask for your username and password once.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
-                HStack(spacing: 12) {
-                    Button("Save") {
-                        CredentialStore.shared.set(password, for: profile.id)
-                        hasStored = CredentialStore.shared.hasPassword(for: profile.id)
-                        justSaved = true
-                        if hasStored {
-                            store.update(id: profile.id) { p in
-                                p.sessionHealth = SessionHealth()
-                                p.stickyBanner = nil
-                            }
-                            if let updated = store.profile(id: profile.id) { profile = updated }
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    if justSaved {
-                        Label("Saved", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green).font(.caption)
-                    } else if hasStored {
-                        Label("Stored", systemImage: "checkmark.seal.fill")
-                            .foregroundStyle(.secondary).font(.caption)
-                    }
-                    Spacer()
-                    Button("Clear") {
-                        password = ""
-                        CredentialStore.shared.remove(for: profile.id)
-                        hasStored = false
-                        justSaved = false
-                    }
-                    .font(.caption)
-                    .disabled(password.isEmpty && !hasStored)
-                }
-                Text("Stored in macOS Keychain on this Mac only.")
-                    .font(.caption2).foregroundStyle(.secondary)
+                Button("Change sign-in…", action: onManageCredentials)
+            } header: {
+                Text("Sign-in")
             }
 
             Section {
@@ -181,12 +140,12 @@ struct ConnectionSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .onChange(of: password) { _, _ in justSaved = false }
-        .onAppear {
-            hasStored = CredentialStore.shared.hasPassword(for: profile.id)
-            password = CredentialStore.shared.password(for: profile.id) ?? ""
-            justSaved = false
-        }
+        .onAppear { refreshStoredState() }
+        .onChange(of: profile.id) { _, _ in refreshStoredState() }
+    }
+
+    private func refreshStoredState() {
+        hasStoredPassword = CredentialStore.shared.hasPassword(for: profile.id)
     }
 
     private var settingsMatchLastWorking: Bool {

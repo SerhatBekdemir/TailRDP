@@ -35,6 +35,37 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
         return p
     }
 
+    /// Username passed to FreeRDP — Linux system accounts are lowercase.
+    var rdpUsernameForConnect: String {
+        let trimmed = rdpUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        return os == "linux" ? trimmed.lowercased() : trimmed
+    }
+
+    mutating func normalizeCredentials() {
+        rdpUsername = rdpUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        sshUsername = sshUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard os == "linux" else { return }
+        rdpUsername = rdpUsername.lowercased()
+        sshUsername = sshUsername.lowercased()
+    }
+
+    /// Sidebar + banners: remote session is paused locally (window closed, work still running).
+    var hasPausedSession: Bool {
+        health.lastEndKind == .paused || stickyBanner?.style == .paused
+    }
+
+    /// Keep sticky banner in sync with persisted pause state (e.g. after relaunch).
+    mutating func ensurePausedBanner() {
+        guard health.lastEndKind == .paused else { return }
+        guard stickyBanner?.style != .paused else { return }
+        stickyBanner = HostStatusBanner(
+            text: "Session paused. Connect again to resume.",
+            detail: nil,
+            style: .paused,
+            actionLabel: "Resume"
+        )
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, hostName, displayName, address, os, online
         case rdpUsername, sshUsername, rdpPort, settings, lastRemoteDir
@@ -84,7 +115,7 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
 
     static func make(from peer: TailscalePeer) -> HostProfile {
         let user = UserDefaults.standard.defaultUsername
-        return HostProfile(
+        var profile = HostProfile(
             id: peer.id,
             hostName: peer.hostName,
             displayName: peer.hostName,
@@ -97,5 +128,7 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
             settings: .default,
             lastRemoteDir: ""
         )
+        profile.normalizeCredentials()
+        return profile
     }
 }

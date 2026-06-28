@@ -21,12 +21,24 @@ public struct HostStatusBanner: Codable, Equatable, Sendable {
     public var detail: String?
     public var style: Style
     public var actionLabel: String?
+    /// When true, the host banner should open the sign-in sheet instead of reconnecting blindly.
+    public var needsCredentials: Bool = false
 
-    public init(text: String, detail: String?, style: Style, actionLabel: String?) {
+    public init(text: String, detail: String?, style: Style, actionLabel: String?, needsCredentials: Bool = false) {
         self.text = text
         self.detail = detail
         self.style = style
         self.actionLabel = actionLabel
+        self.needsCredentials = needsCredentials
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decode(String.self, forKey: .text)
+        detail = try c.decodeIfPresent(String.self, forKey: .detail)
+        style = try c.decode(Style.self, forKey: .style)
+        actionLabel = try c.decodeIfPresent(String.self, forKey: .actionLabel)
+        needsCredentials = try c.decodeIfPresent(Bool.self, forKey: .needsCredentials) ?? false
     }
 
     public static func from(_ outcome: SessionEndOutcome) -> HostStatusBanner? {
@@ -51,7 +63,8 @@ public struct HostStatusBanner: Codable, Equatable, Sendable {
                 text: outcome.message,
                 detail: outcome.fixSummary,
                 style: .error,
-                actionLabel: outcome.actionLabel
+                actionLabel: outcome.actionLabel,
+                needsCredentials: outcome.needsCredentials
             )
         }
     }
@@ -64,19 +77,22 @@ public struct SessionEndOutcome: Equatable, Sendable {
     public var fixSummary: String?
     public var actionLabel: String?
     public var sshUnverified: Bool
+    public var needsCredentials: Bool
 
     public init(
         message: String,
         kind: SessionEndKind,
         fixSummary: String? = nil,
         actionLabel: String? = nil,
-        sshUnverified: Bool = false
+        sshUnverified: Bool = false,
+        needsCredentials: Bool = false
     ) {
         self.message = message
         self.kind = kind
         self.fixSummary = fixSummary
         self.actionLabel = actionLabel
         self.sshUnverified = sshUnverified
+        self.needsCredentials = needsCredentials
     }
 
     public var isError: Bool { kind == .crashed }
@@ -106,6 +122,9 @@ struct SessionHealth: Codable, Equatable, Sendable {
     var lastEndKind: SessionEndKind?
     /// Adaptive pause before Linux resume connect (ms). Learned from prior outcomes.
     var linuxResumeDelayMs: Int = SessionHealth.defaultLinuxResumeDelayMs
+
+    /// Seconds a session must run before pause state is cleared on reconnect.
+    static let establishedSessionThreshold: TimeInterval = 45
 
     static let defaultLinuxResumeDelayMs = 3000
     static let minLinuxResumeDelayMs = 1500

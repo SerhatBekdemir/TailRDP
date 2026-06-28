@@ -93,9 +93,19 @@ enum SFTPService {
             : .fail(res.stderr.isEmpty ? "scp failed (exit \(res.exitCode))" : res.stderr)
     }
 
+    /// Escape a remote path for scp `user@host:path` syntax.
+    private static func scpRemotePath(_ profile: HostProfile, path: String) -> String {
+        if path.contains(" ") || path.contains("'") || path.contains("\"") {
+            let escaped = path.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            return "\(target(profile)):\"\(escaped)\""
+        }
+        return "\(target(profile)):\(path)"
+    }
+
     static func pull(_ profile: HostProfile, remotePaths: [String], localDir: String) -> Result<String, AppError> {
         guard !remotePaths.isEmpty else { return .fail("No remote items selected") }
-        let sources = remotePaths.map { "\(target(profile)):\(shq($0))" }
+        let sources = remotePaths.map { scpRemotePath(profile, path: $0) }
         let args = commonOpts + ["-r"] + sources + [localDir]
         let res = ProcessRunner.run(scp, args)
         return res.ok

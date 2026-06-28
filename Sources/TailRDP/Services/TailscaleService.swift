@@ -9,6 +9,8 @@ final class TailscaleService: ObservableObject {
     @Published var lastError: String?
     @Published var isRefreshing = false
 
+    private var refreshGeneration: UInt64 = 0
+
     private static let binaryCandidates = [
         "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
         "/opt/homebrew/bin/tailscale",
@@ -45,6 +47,8 @@ final class TailscaleService: ObservableObject {
             return
         }
         isRefreshing = true
+        refreshGeneration += 1
+        let generation = refreshGeneration
         Task.detached(priority: .userInitiated) {
             let res = ProcessRunner.run(bin, ["status", "--json"])
             let parsed = Self.parse(res.stdout)
@@ -53,15 +57,22 @@ final class TailscaleService: ObservableObject {
             } else {
                 AppLog.tailscale.error("tailscale status failed: \(AppLog.stderrTail(res.stderr), privacy: .public)")
             }
-            await self.apply(parsed: parsed, stdout: res.stdout, stderr: res.stderr)
+            await self.apply(
+                parsed: parsed,
+                stdout: res.stdout,
+                stderr: res.stderr,
+                generation: generation
+            )
         }
     }
 
     private func apply(
         parsed: (selfPeer: TailscalePeer?, peers: [TailscalePeer])?,
         stdout: String,
-        stderr: String
+        stderr: String,
+        generation: UInt64
     ) {
+        guard generation == refreshGeneration else { return }
         isRefreshing = false
         if let parsed {
             selfPeer = parsed.selfPeer

@@ -75,16 +75,6 @@ struct ContentView: View {
         }
         .onChange(of: launcher.sessionEndNotice) { _, notice in
             guard let notice else { return }
-            if !notice.userInitiated, notice.endKind != .loggedOut {
-                store.applySessionOutcome(
-                    profileID: notice.profileID,
-                    outcome: SessionEndOutcome(
-                        message: notice.message,
-                        kind: notice.endKind,
-                        actionLabel: notice.endKind == .crashed ? "Reconnect" : "Resume"
-                    )
-                )
-            }
             Task {
                 let gen = (sessionEndGeneration[notice.profileID] ?? 0) + 1
                 sessionEndGeneration[notice.profileID] = gen

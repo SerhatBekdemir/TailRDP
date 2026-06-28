@@ -23,6 +23,17 @@ final class SessionEndClassifierTests: XCTestCase {
         )
         XCTAssertEqual(end.kind, .paused)
     }
+
+    func testAuthFailureNotPaused() {
+        let end = SessionEndClassifier.classify(loggedOut: false, stderr: "", exitCode: 24, reason: "exit")
+        XCTAssertEqual(end.kind, .crashed)
+        XCTAssertTrue(end.message.contains("Sign-in"))
+    }
+
+    func testUnexpectedExitEmptyStderrIsCrashed() {
+        let end = SessionEndClassifier.classify(loggedOut: false, stderr: "", exitCode: 42, reason: "exit")
+        XCTAssertEqual(end.kind, .crashed)
+    }
 }
 
 final class DiscoveryTests: XCTestCase {
@@ -92,20 +103,58 @@ final class RDPLauncherArgumentTests: XCTestCase {
             settings: { var s = RDPSettings(); s.autoReconnect = true; return s }(),
             lastRemoteDir: ""
         )
-        let args = launcher.buildArguments(for: profile, includeStdin: false)
+        let args = launcher.buildArguments(for: profile, password: nil)
         XCTAssertFalse(args.contains("+auto-reconnect"))
     }
 
     @MainActor
-    func testStdinFlagWhenPasswordExpected() {
+    func testPasswordPassedInArgsWhenSet() {
         let launcher = RDPLauncher()
         let profile = HostProfile(
             id: "win", hostName: "win", displayName: "win", address: "100.64.0.2", os: "windows",
             online: true, rdpUsername: "u", sshUsername: "u", rdpPort: 3389,
             settings: .default, lastRemoteDir: ""
         )
-        let args = launcher.buildArguments(for: profile, includeStdin: true)
-        XCTAssertTrue(args.contains("/from-stdin:force"))
+        let args = launcher.buildArguments(for: profile, password: "secret")
+        XCTAssertTrue(args.contains("/p:secret"))
+        XCTAssertFalse(args.contains("/from-stdin"))
+    }
+
+    @MainActor
+    func testLinuxUsernameLowercasedInArgs() {
+        let launcher = RDPLauncher()
+        let profile = HostProfile(
+            id: "box", hostName: "box", displayName: "box", address: "100.64.0.1", os: "linux",
+            online: true, rdpUsername: "Aegis", sshUsername: "aegis", rdpPort: 3389,
+            settings: .default, lastRemoteDir: ""
+        )
+        let args = launcher.buildArguments(for: profile, password: nil)
+        XCTAssertTrue(args.contains("/u:aegis"))
+    }
+}
+
+final class HostProfileCredentialTests: XCTestCase {
+    func testNormalizeLinuxUsernames() {
+        var profile = HostProfile(
+            id: "box", hostName: "box", displayName: "box", address: "100.64.0.1", os: "linux",
+            online: true, rdpUsername: " Aegis ", sshUsername: " Aegis ", rdpPort: 3389,
+            settings: .default, lastRemoteDir: ""
+        )
+        profile.normalizeCredentials()
+        XCTAssertEqual(profile.rdpUsername, "aegis")
+        XCTAssertEqual(profile.sshUsername, "aegis")
+    }
+
+    func testPausedTagFromHealthWhenBannerMissing() {
+        var profile = HostProfile(
+            id: "box", hostName: "box", displayName: "box", address: "100.64.0.1", os: "linux",
+            online: true, rdpUsername: "a", sshUsername: "a", rdpPort: 3389,
+            settings: .default, lastRemoteDir: "",
+            sessionHealth: { var h = SessionHealth(); h.lastEndKind = .paused; return h }()
+        )
+        XCTAssertTrue(profile.hasPausedSession)
+        profile.ensurePausedBanner()
+        XCTAssertEqual(profile.stickyBanner?.style, .paused)
     }
 }
 
@@ -137,6 +186,39 @@ final class ProfileExportTests: XCTestCase {
         XCTAssertEqual(result.imported, 1)
         XCTAssertEqual(store2.profiles.first?.rdpUsername, "alice")
         XCTAssertTrue(result.needsPassword.contains("Dev"))
+    }
+
+    @MainActor
+    func testImportMergePreservesLocalSessionState() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TailRDPExport-\(UUID().uuidString)/profiles.json")
+        let store = ProfileStore(testProfilesURL: url)
+        var local = HostProfile(
+            id: "dev", hostName: "dev", displayName: "Dev", address: "100.64.0.3", os: "linux",
+            online: true, rdpUsername: "alice", sshUsername: "alice", rdpPort: 3389,
+            settings: .default, lastRemoteDir: "/home/alice",
+            sessionHealth: { var h = SessionHealth(); h.lastEndKind = .paused; return h }(),
+            stickyBanner: HostStatusBanner(
+                text: "Session paused.", detail: nil, style: .paused, actionLabel: "Resume"
+            )
+        )
+        store.profiles = [local]
+        var exported = local
+        exported.online = false
+        exported.stickyBanner = nil
+        exported.sessionHealth = nil
+        exported.settings.width = 2560
+        let bundle = ProfileExportBundle(profiles: [exported])
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted]
+        enc.dateEncodingStrategy = .iso8601
+        let data = try enc.encode(bundle)
+        let result = try store.importData(data)
+        XCTAssertEqual(result.imported, 1)
+        XCTAssertEqual(store.profiles.first?.settings.width, 2560)
+        XCTAssertEqual(store.profiles.first?.health.lastEndKind, .paused)
+        XCTAssertEqual(store.profiles.first?.stickyBanner?.style, .paused)
+        XCTAssertTrue(store.profiles.first?.online == true)
     }
 }
 

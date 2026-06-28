@@ -1,8 +1,7 @@
 import Foundation
 import Combine
 
-/// Builds the sdl-freerdp argv from a profile and launches it, feeding the
-/// password over stdin (/from-stdin:force) so it never appears in argv or on disk.
+/// Builds the sdl-freerdp argv from a profile and launches it with the saved password.
 struct SessionEndNotice: Equatable {
     let profileID: String
     let message: String
@@ -42,13 +41,13 @@ final class RDPLauncher: ObservableObject {
         sessionSettingsUsed[profileID]
     }
 
-    func buildArguments(for profile: HostProfile, includeStdin: Bool) -> [String] {
+    func buildArguments(for profile: HostProfile, password: String?) -> [String] {
         let s = profile.settings
         var a: [String] = [
             "/v:\(profile.address):\(profile.rdpPort)",
-            "/u:\(profile.rdpUsername)"
+            "/u:\(profile.rdpUsernameForConnect)"
         ]
-        if includeStdin { a.append("/from-stdin:force") }
+        if let password, !password.isEmpty { a.append("/p:\(password)") }
         a += [
             "/sec:nla",
             "/cert:ignore",
@@ -73,12 +72,8 @@ final class RDPLauncher: ObservableObject {
 
     func previewCommand(for profile: HostProfile) -> String {
         let bin = (binaryPath as NSString?)?.lastPathComponent ?? "sdl-freerdp"
-        let pwd = CredentialStore.shared.hasPassword(for: profile.id) ? "(stdin)" : nil
-        var args = buildArguments(for: profile, includeStdin: pwd != nil)
-        if pwd != nil, let idx = args.firstIndex(of: "/from-stdin:force") {
-            args[idx] = "/from-stdin:(stdin)"
-        }
-        return ([bin] + args).joined(separator: " ")
+        let masked = CredentialStore.shared.hasPassword(for: profile.id) ? "••••••" : nil
+        return ([bin] + buildArguments(for: profile, password: masked)).joined(separator: " ")
     }
 
     func launch(profile: HostProfile) async -> String? {
@@ -86,14 +81,16 @@ final class RDPLauncher: ObservableObject {
             return "sdl-freerdp not found — install with: brew install freerdp"
         }
         guard !profile.address.isEmpty else { return "No address set for this machine" }
+        guard let password = CredentialStore.shared.password(for: profile.id), !password.isEmpty else {
+            return "No saved sign-in for this machine"
+        }
 
         let generation = (sessionGeneration[profile.id] ?? 0) + 1
         sessionGeneration[profile.id] = generation
 
         await terminateClients(to: profile)
 
-        let password = CredentialStore.shared.password(for: profile.id) ?? ""
-        let args = buildArguments(for: profile, includeStdin: !password.isEmpty)
+        let args = buildArguments(for: profile, password: password)
         AppLog.rdp.info("Launching RDP to \(profile.id, privacy: .public) gen=\(generation)")
         AppLog.rdp.debug("argv: \(AppLog.redactedArgv(args), privacy: .public)")
         let proc = Process()
@@ -101,8 +98,6 @@ final class RDPLauncher: ObservableObject {
         proc.arguments = args
         let errPipe = Pipe()
         proc.standardError = errPipe
-        let inPipe = Pipe()
-        proc.standardInput = inPipe
         stderrPipes[profile.id] = errPipe
 
         let profileID = profile.id
@@ -147,12 +142,6 @@ final class RDPLauncher: ObservableObject {
 
         do { try proc.run() } catch {
             return "launch failed: \(error.localizedDescription)"
-        }
-
-        if !password.isEmpty {
-            // Match ProcessRunner: write after launch, newline-terminated, then close for EOF.
-            inPipe.fileHandleForWriting.write(Data((password + "\n").utf8))
-            try? inPipe.fileHandleForWriting.close()
         }
 
         processes[profile.id] = proc

@@ -38,7 +38,8 @@ public enum SessionEndClassifier {
                 errInfoCode: errInfo
             )
         }
-        if isClientWindowClosed(exitCode: exitCode, reason: reason, stderr: stderr) {
+        if !isKnownFailureExit(exitCode: exitCode, stderr: stderr),
+           isClientWindowClosed(exitCode: exitCode, reason: reason, stderr: stderr) {
             return SessionEndClassification(
                 kind: .paused,
                 message: "Session paused. Connect again to resume.",
@@ -54,8 +55,8 @@ public enum SessionEndClassifier {
         }
         if exitCode != 0 {
             let message: String
-            if exitCode == 24 || stderr.contains("passphrase") {
-                message = "Could not authenticate — re-save the password in Connection settings and try again."
+            if exitCode == 24 || stderr.contains("passphrase") || stderr.contains("AUTHENTICATION_FAILED") {
+                message = "Sign-in failed."
             } else {
                 message = "Connection ended unexpectedly (code \(exitCode))."
             }
@@ -76,7 +77,13 @@ public enum SessionEndClassifier {
         let windowCloseCodes: Set<Int32> = [130, 131, 143, 2, 3, 15]
         if windowCloseCodes.contains(exitCode) { return true }
         if reason == "signal", windowCloseCodes.contains(exitCode) { return true }
-        if exitCode != 0, stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+        return false
+    }
+
+    /// Non-zero exits that indicate failure, not a paused window close.
+    private static func isKnownFailureExit(exitCode: Int32, stderr: String) -> Bool {
+        if exitCode == 24 { return true }
+        if stderr.contains("AUTHENTICATION_FAILED") || stderr.contains("passphrase") { return true }
         return false
     }
 
@@ -97,6 +104,10 @@ public enum SessionEndClassifier {
               "TailRDP Disconnect → loggedOut")
         check(classify(loggedOut: false, stderr: "err", exitCode: 42, reason: "exit").kind == .crashed,
               "Unexpected exit → crashed")
+        check(classify(loggedOut: false, stderr: "", exitCode: 24, reason: "exit").kind == .crashed,
+              "Auth failure (24) empty stderr → crashed")
+        check(classify(loggedOut: false, stderr: "", exitCode: 42, reason: "exit").kind == .crashed,
+              "Unexpected exit empty stderr → crashed")
         check(classify(loggedOut: false, stderr: "", exitCode: 0, reason: "signal").kind == .crashed,
               "Signal → crashed")
         check(HostStatusBanner.from(SessionEndOutcome(message: "paused", kind: .paused, actionLabel: "Resume")) != nil,

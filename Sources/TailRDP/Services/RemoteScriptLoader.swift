@@ -21,8 +21,8 @@ enum RemoteScriptLoader {
                 return text
             }
         }
-        AppLog.ssh.error("Remote script \(script.rawValue, privacy: .public) checksum mismatch — using source tree copy")
-        return sourceTreeContents(script) ?? ""
+        AppLog.ssh.error("Remote script \(script.rawValue, privacy: .public) checksum mismatch — refusing to run")
+        return ""
     }
 
     static func reportScript(sinceMinutes: Int?) -> String {
