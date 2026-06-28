@@ -24,7 +24,9 @@ enum SessionCoordinator {
         // Gnome Remote Desktop can hang if the client reconnects before the prior
         // RDP socket is fully torn down — give Linux hosts a moment after pause.
         if isLinuxResume {
-            try? await Task.sleep(for: .seconds(3))
+            let delayMs = base.health.linuxResumeDelayMs
+            AppLog.session.info("Linux resume delay \(delayMs)ms for \(profileID, privacy: .public)")
+            try? await Task.sleep(for: .milliseconds(delayMs))
         }
 
         // Only heal before connect after a prior crash — never after pause or logout.
@@ -54,10 +56,30 @@ enum SessionCoordinator {
                 h.consecutiveFailures += 1
                 h.lastFailureSummary = err
                 h.lastEndKind = .crashed
+                if isLinuxResume {
+                    h.linuxResumeDelayMs = min(
+                        SessionHealth.maxLinuxResumeDelayMs,
+                        h.linuxResumeDelayMs + SessionHealth.resumeDelayBackoffMs
+                    )
+                }
                 p.sessionHealth = h
             }
+            AppLog.session.error("Connect failed for \(profileID, privacy: .public): \(err, privacy: .public)")
             return (err, true)
         }
+
+        if isLinuxResume {
+            store.update(id: profileID) { p in
+                var h = p.health
+                h.linuxResumeDelayMs = max(
+                    SessionHealth.minLinuxResumeDelayMs,
+                    h.linuxResumeDelayMs - SessionHealth.resumeDelayStepMs
+                )
+                p.sessionHealth = h
+            }
+        }
+
+        AppLog.session.info("Connected to \(profileID, privacy: .public)")
 
         let msg = statusParts.joined(separator: ". ") + "."
         return (msg, false)
@@ -98,13 +120,16 @@ enum SessionCoordinator {
                 return SessionEndOutcome(message: "Disconnected.", kind: .loggedOut)
             }
             let sshNote = resolved.sshUnknown
-                ? "SSH unavailable — session state unverified."
+                ? "SSH is unavailable. The remote session may still be running."
                 : nil
             return SessionEndOutcome(
-                message: notice.message,
+                message: resolved.sshUnknown
+                    ? "Session ended — couldn't verify remote state"
+                    : notice.message,
                 kind: .paused,
                 fixSummary: sshNote,
-                actionLabel: "Resume"
+                actionLabel: "Resume",
+                sshUnverified: resolved.sshUnknown
             )
 
         case .crashed:

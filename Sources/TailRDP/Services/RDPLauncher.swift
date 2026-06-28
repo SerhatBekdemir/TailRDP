@@ -94,6 +94,8 @@ final class RDPLauncher: ObservableObject {
 
         let password = CredentialStore.shared.password(for: profile.id) ?? ""
         let args = buildArguments(for: profile, includeStdin: !password.isEmpty)
+        AppLog.rdp.info("Launching RDP to \(profile.id, privacy: .public) gen=\(generation)")
+        AppLog.rdp.debug("argv: \(AppLog.redactedArgv(args), privacy: .public)")
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bin)
         proc.arguments = args
@@ -124,6 +126,10 @@ final class RDPLauncher: ObservableObject {
                     exitCode: finished.terminationStatus,
                     reason: reason
                 )
+                AppLog.rdp.info(
+                    "RDP ended \(profileID, privacy: .public) kind=\(String(describing: end.kind), privacy: .public) code=\(finished.terminationStatus)"
+                )
+                AppLog.rdp.debug("stderr tail: \(AppLog.stderrTail(stderrText), privacy: .public)")
                 self?.sessionEndNotice = SessionEndNotice(
                     profileID: profileID,
                     message: end.message,

@@ -8,6 +8,7 @@ let package = Package(
         .executableTarget(
             name: "TailRDP",
             path: "Sources/TailRDP",
+            resources: [.process("RemoteScripts")],
             swiftSettings: [
                 .swiftLanguageMode(.v5),
                 .unsafeFlags(["-strict-concurrency=minimal"])

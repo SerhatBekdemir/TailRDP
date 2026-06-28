@@ -56,11 +56,15 @@ final class CredentialStore {
             kSecAttrService as String: Self.service,
             kSecAttrAccount as String: id
         ]
-        let attrs: [String: Any] = [kSecValueData as String: data]
+        let attrs: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
+        ]
         let updateStatus = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
         if updateStatus == errSecItemNotFound {
             var addQuery = query
             addQuery[kSecValueData as String] = data
+            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
             SecItemAdd(addQuery as CFDictionary, nil)
         }
     }

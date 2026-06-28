@@ -48,6 +48,11 @@ final class TailscaleService: ObservableObject {
         Task.detached(priority: .userInitiated) {
             let res = ProcessRunner.run(bin, ["status", "--json"])
             let parsed = Self.parse(res.stdout)
+            if parsed != nil {
+                AppLog.tailscale.info("Refreshed \(parsed!.peers.count) peer(s)")
+            } else {
+                AppLog.tailscale.error("tailscale status failed: \(AppLog.stderrTail(res.stderr), privacy: .public)")
+            }
             await self.apply(parsed: parsed, stdout: res.stdout, stderr: res.stderr)
         }
     }

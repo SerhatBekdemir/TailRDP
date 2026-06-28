@@ -2,7 +2,7 @@ import Foundation
 
 /// A saved, editable connection profile. The password is NOT stored here —
 /// it lives in the macOS Keychain (service `app.tailrdp`), keyed by `id`.
-struct HostProfile: Codable, Identifiable, Equatable {
+struct HostProfile: Codable, Identifiable, Equatable, Sendable {
     var id: String          // stable key = lowercased hostname (credential account too)
     var hostName: String
     var displayName: String

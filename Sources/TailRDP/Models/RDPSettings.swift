@@ -1,6 +1,6 @@
 import Foundation
 
-enum GFXCodec: String, Codable, CaseIterable, Identifiable {
+enum GFXCodec: String, Codable, CaseIterable, Identifiable, Sendable {
     case avc444 = "AVC444"
     case avc420 = "AVC420"
     case rfx = "RFX"
@@ -18,7 +18,7 @@ enum GFXCodec: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum NetworkType: String, Codable, CaseIterable, Identifiable {
+enum NetworkType: String, Codable, CaseIterable, Identifiable, Sendable {
     case lan, broadband, wan, auto
 
     var id: String { rawValue }
@@ -34,7 +34,7 @@ enum NetworkType: String, Codable, CaseIterable, Identifiable {
 }
 
 /// Per-host RDP launch settings. Defaults mirror the known-good XPS profile.
-struct RDPSettings: Codable, Equatable {
+struct RDPSettings: Codable, Equatable, Sendable {
     var dynamicResolution: Bool = false
     var width: Int = 1920
     var height: Int = 1080

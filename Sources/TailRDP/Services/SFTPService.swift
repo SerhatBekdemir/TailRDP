@@ -23,7 +23,16 @@ enum SFTPService {
 
     /// Run a shell script on the remote host over SSH. Blocking — use from a Task.
     static func runScript(_ profile: HostProfile, script: String) -> ProcessResult {
-        ProcessRunner.run(ssh, commonOpts + [target(profile), script])
+        let start = Date()
+        let res = ProcessRunner.run(ssh, commonOpts + [target(profile), script])
+        let ms = Int(Date().timeIntervalSince(start) * 1000)
+        AppLog.ssh.info(
+            "SSH script on \(profile.id, privacy: .public) exit=\(res.exitCode) \(ms)ms"
+        )
+        if !res.ok {
+            AppLog.ssh.debug("stderr: \(AppLog.stderrTail(res.stderr), privacy: .public)")
+        }
+        return res
     }
 
     /// Remote login home directory (e.g. /home/user). Blocking — use from a Task.

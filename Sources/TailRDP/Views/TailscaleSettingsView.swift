@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 struct TailscaleSettingsView: View {
     @EnvironmentObject var tailscale: TailscaleService
@@ -9,6 +11,7 @@ struct TailscaleSettingsView: View {
     @AppStorage(AppSettingsKey.showOffline) private var showOffline = false
 
     @State private var showWizard = false
+    @State private var importExportMessage: String?
 
     var body: some View {
         Form {
@@ -61,9 +64,23 @@ struct TailscaleSettingsView: View {
                 Text("File transfer and Linux auto-recovery require passwordless SSH key auth. RDP does not.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
+
+            Section("Profiles") {
+                Text("Export saves connection settings only. Passwords stay in Keychain — re-enter them after import.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                HStack {
+                    Button("Export…") { exportProfiles() }
+                    Button("Import…") { importProfiles() }
+                }
+                if let importExportMessage {
+                    Text(importExportMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 520)
+        .frame(width: 480, height: 580)
         .sheet(isPresented: $showWizard) {
             FirstRunWizardView(isPresented: $showWizard)
                 .environmentObject(tailscale)
@@ -80,6 +97,47 @@ struct TailscaleSettingsView: View {
             }
             if tailscale.selfPeer == nil, !tailscale.isRefreshing {
                 tailscale.refresh()
+            }
+        }
+    }
+
+    private func exportProfiles() {
+        do {
+            let data = try store.exportData()
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.json]
+            panel.nameFieldStringValue = "TailRDP-profiles.json"
+            panel.begin { response in
+                guard response == .OK, let url = panel.url else { return }
+                do {
+                    try data.write(to: url, options: .atomic)
+                    importExportMessage = "Exported \(store.profiles.count) profile(s)."
+                } catch {
+                    importExportMessage = error.localizedDescription
+                }
+            }
+        } catch {
+            importExportMessage = error.localizedDescription
+        }
+    }
+
+    private func importProfiles() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                let data = try Data(contentsOf: url)
+                let result = try store.importData(data, merge: true)
+                var msg = "Imported \(result.imported) profile(s)."
+                if result.skipped > 0 { msg += " Skipped \(result.skipped) duplicate(s)." }
+                if !result.needsPassword.isEmpty {
+                    msg += " Re-enter passwords for: \(result.needsPassword.joined(separator: ", "))."
+                }
+                importExportMessage = msg
+            } catch {
+                importExportMessage = error.localizedDescription
             }
         }
     }

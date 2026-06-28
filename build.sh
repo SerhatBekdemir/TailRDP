@@ -20,6 +20,10 @@ echo "==> assembling $BUNDLE"
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp "$BIN" "$BUNDLE/Contents/MacOS/$APP"
+if [ -d Sources/TailRDP/RemoteScripts ]; then
+    mkdir -p "$BUNDLE/Contents/Resources/RemoteScripts"
+    cp Sources/TailRDP/RemoteScripts/* "$BUNDLE/Contents/Resources/RemoteScripts/"
+fi
 if [ -f Resources/AppIcon.icns ]; then
     cp Resources/AppIcon.icns "$BUNDLE/Contents/Resources/AppIcon.icns"
     ICON_PLIST='    <key>CFBundleIconFile</key>       <string>AppIcon</string>'

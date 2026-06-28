@@ -7,6 +7,7 @@ enum AppSettingsKey {
     static let defaultUsername = "defaultUsername"
     static let showOffline = "showOffline"
     static let hasCompletedFirstRun = "hasCompletedFirstRun"
+    static let dismissedDependencyWarning = "dismissedDependencyWarning"
 }
 
 extension UserDefaults {
@@ -14,4 +15,8 @@ extension UserDefaults {
     var defaultUsername: String {
         string(forKey: AppSettingsKey.defaultUsername) ?? ""
     }
+}
+
+extension Notification.Name {
+    static let showAboutWindow = Notification.Name("TailRDPShowAbout")
 }

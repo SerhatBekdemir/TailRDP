@@ -8,6 +8,9 @@ final class ProfileStore: ObservableObject {
     /// Per-host flash banners (connect ack, disconnect) — survive host switches; not saved to disk.
     @Published private(set) var flashBanners: [String: HostFlashBanner] = [:]
 
+    private var flashExpiryTasks: [String: Task<Void, Never>] = [:]
+    private static let flashAutoDismissSeconds: UInt64 = 5
+
     private let url: URL
 
     init() {
@@ -71,14 +74,25 @@ final class ProfileStore: ObservableObject {
     }
 
     func setFlashBanner(profileID: String, banner: HostFlashBanner?) {
+        flashExpiryTasks[profileID]?.cancel()
+        flashExpiryTasks[profileID] = nil
         if let banner {
             flashBanners[profileID] = banner
+            if banner.style == .success {
+                flashExpiryTasks[profileID] = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(Self.flashAutoDismissSeconds))
+                    guard let self, self.flashBanners[profileID] == banner else { return }
+                    self.clearFlashBanner(profileID: profileID)
+                }
+            }
         } else {
             flashBanners.removeValue(forKey: profileID)
         }
     }
 
     func clearFlashBanner(profileID: String) {
+        flashExpiryTasks[profileID]?.cancel()
+        flashExpiryTasks[profileID] = nil
         flashBanners.removeValue(forKey: profileID)
     }
 
@@ -160,5 +174,50 @@ final class ProfileStore: ObservableObject {
             profiles[i].online = false
         }
         save()
+    }
+
+    /// Export profiles as JSON (passwords stay in Keychain — re-enter after import).
+    func exportData() throws -> Data {
+        let bundle = ProfileExportBundle(profiles: profiles)
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        enc.dateEncodingStrategy = .iso8601
+        return try enc.encode(bundle)
+    }
+
+    /// Import profiles from an export bundle. Merges by id by default.
+    func importData(_ data: Data, merge: Bool = true) throws -> ProfileImportResult {
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        let bundle = try dec.decode(ProfileExportBundle.self, from: data)
+        guard bundle.version <= ProfileExportBundle.currentVersion else {
+            throw ProfileImportError.unsupportedVersion(bundle.version)
+        }
+        var imported = 0
+        var skipped = 0
+        var needsPassword: [String] = []
+        for profile in bundle.profiles {
+            if merge, profiles.contains(where: { $0.id == profile.id }) {
+                if let i = profiles.firstIndex(where: { $0.id == profile.id }) {
+                    var merged = profile
+                    merged.online = profiles[i].online
+                    if profiles[i].address.isEmpty == false, profile.address.isEmpty {
+                        merged.address = profiles[i].address
+                    }
+                    profiles[i] = merged
+                    imported += 1
+                }
+            } else if profiles.contains(where: { $0.id == profile.id }) {
+                skipped += 1
+            } else {
+                profiles.append(profile)
+                imported += 1
+            }
+            if !CredentialStore.shared.hasPassword(for: profile.id) {
+                needsPassword.append(profile.displayName)
+            }
+        }
+        save()
+        return ProfileImportResult(imported: imported, skipped: skipped, needsPassword: needsPassword)
     }
 }

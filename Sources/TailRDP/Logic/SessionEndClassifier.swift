@@ -110,6 +110,18 @@ public enum SessionEndClassifier {
         check(RemoteDisplayRecovery.looksLikeRecentCrash(RemoteSessionReport(
             layoutSummary: "", remoteSessionIDs: [], recentErrors: ["SEGV in gnome-shell"]
         )), "Journal SEGV → crash signal")
+        check(HostStatusBanner.from(SessionEndOutcome(
+            message: "x", kind: .paused, sshUnverified: true
+        ))?.text.contains("verify") == true, "SSH unknown → unverified banner")
+        let scriptFailures = RemoteScriptLoader.verifyPinnedHashes()
+        if scriptFailures.isEmpty {
+            print("OK  Remote script SHA256 pins")
+        } else {
+            for failure in scriptFailures {
+                print("FAIL \(failure)")
+                failures += 1
+            }
+        }
 
         if failures == 0 { print("All session logic checks passed.") }
         else { print("\(failures) check(s) failed.") }

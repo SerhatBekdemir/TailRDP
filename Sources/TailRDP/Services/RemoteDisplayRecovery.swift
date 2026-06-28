@@ -112,9 +112,10 @@ public enum RemoteDisplayRecovery {
         }
     }
 
-    static func terminateRemoteSessions(_ profile: HostProfile) -> Result<String, AppError> {
+    static func terminateRemoteSessions(_ profile: HostProfile, exceptSessionID: String? = nil) -> Result<String, AppError> {
         guard profile.os == "linux" else { return .fail("Only applies to Linux hosts") }
-        let res = SFTPService.runScript(profile, script: terminateSessionsScript)
+        let script = RemoteScriptLoader.terminateSessionsScript(exceptSessionID: exceptSessionID)
+        let res = SFTPService.runScript(profile, script: script)
         if !res.ok && !res.stdout.contains("__RECOVER__ok") {
             let msg = res.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             return .fail(msg.isEmpty ? "Could not end remote sessions (exit \(res.exitCode))" : msg)
@@ -125,7 +126,7 @@ public enum RemoteDisplayRecovery {
 
     static func recover(_ profile: HostProfile) -> Result<String, AppError> {
         guard profile.os == "linux" else { return .fail("Session recovery only applies to Linux hosts") }
-        let res = SFTPService.runScript(profile, script: recoverScript)
+        let res = SFTPService.runScript(profile, script: RemoteScriptLoader.recoverScript())
         if !res.ok && !res.stdout.contains("__RECOVER__ok") {
             let msg = res.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             return .fail(msg.isEmpty ? "SSH recovery failed (exit \(res.exitCode))" : msg)
@@ -148,26 +149,8 @@ public enum RemoteDisplayRecovery {
         }
     }
 
-    private static let terminateSessionsScript = """
-    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-    TERMINATED=0
-    for sid in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
-      [ -n "$sid" ] || continue
-      remote=$(loginctl show-session "$sid" -p Remote --value 2>/dev/null)
-      type=$(loginctl show-session "$sid" -p Type --value 2>/dev/null)
-      user=$(loginctl show-session "$sid" -p User --value 2>/dev/null)
-      if [ "$remote" = yes ] && [ "$type" = wayland ] && [ "$user" = "$(id -u)" ]; then
-        if loginctl terminate-session "$sid" 2>/dev/null; then
-          TERMINATED=$((TERMINATED+1))
-        fi
-      fi
-    done
-    echo "__RECOVER__ok=1"
-    echo "__RECOVER__terminated=$TERMINATED"
-    """
-
     private static func runReportScript(_ profile: HostProfile, sinceMinutes: Int?) -> Result<RemoteSessionReport, AppError> {
-        let res = SFTPService.runScript(profile, script: reportScript(sinceMinutes: sinceMinutes))
+        let res = SFTPService.runScript(profile, script: RemoteScriptLoader.reportScript(sinceMinutes: sinceMinutes))
         if !res.ok && !res.stdout.contains("__REPORT__") {
             let msg = res.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             return .fail(msg.isEmpty ? "SSH inspect failed (exit \(res.exitCode))" : msg)
@@ -181,115 +164,6 @@ public enum RemoteDisplayRecovery {
             recentErrors: errors
         ))
     }
-
-    private static func reportScript(sinceMinutes: Int?) -> String {
-        let envPrefix = sinceMinutes.map { "SINCE_MINUTES=\($0) " } ?? ""
-        return """
-        \(envPrefix)python3 - <<'PY'
-        import os, subprocess, xml.etree.ElementTree as ET
-
-        since = os.environ.get("SINCE_MINUTES", "").strip()
-        layout_parts = []
-        mon_path = os.path.join(os.path.expanduser("~"), ".config", "monitors.xml")
-        if os.path.isfile(mon_path):
-            try:
-                root = ET.parse(mon_path).getroot()
-                for cfg in root.findall("configuration"):
-                    for logical in cfg.findall("logicalmonitor"):
-                        scale_el = logical.find("scale")
-                        scale = float(scale_el.text) if scale_el is not None and scale_el.text else 1.0
-                        connectors = [
-                            m.find("connector").text
-                            for m in logical.findall("monitor")
-                            if m.find("connector") is not None and m.find("connector").text
-                        ]
-                        mode = logical.find(".//mode")
-                        wh = ""
-                        if mode is not None:
-                            w, h = mode.find("width"), mode.find("height")
-                            if w is not None and h is not None and w.text and h.text:
-                                wh = f" {w.text}x{h.text}"
-                        names = ",".join(connectors) if connectors else "remote"
-                        layout_parts.append(f"{names}{wh} @{scale:g}x")
-            except Exception as e:
-                layout_parts.append(f"monitors.xml: {e}")
-        else:
-            layout_parts.append("default layout")
-
-        uid = os.getuid()
-        remote_ids = []
-        try:
-            out = subprocess.check_output(["loginctl", "list-sessions", "--no-legend"], text=True)
-            for line in out.splitlines():
-                parts = line.split()
-                if not parts:
-                    continue
-                sid = parts[0]
-                show = subprocess.check_output(
-                    ["loginctl", "show-session", sid, "-p", "Remote", "-p", "Type", "-p", "User"],
-                    text=True
-                )
-                fields = dict(ln.split("=", 1) for ln in show.splitlines() if "=" in ln)
-                if fields.get("Remote") == "yes" and fields.get("Type") == "wayland":
-                    if fields.get("User", "").strip() == str(uid):
-                        remote_ids.append(sid)
-        except Exception:
-            pass
-
-        errors = []
-        if since:
-            journal_args = ["journalctl", "--user", "-n", "60", "--no-pager", f"--since={since} min ago"]
-            system_args = ["journalctl", "-n", "80", "--no-pager", f"--since={since} min ago"]
-
-            def collect(args, keywords):
-                try:
-                    out = subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL)
-                    for line in out.splitlines():
-                        s = line.strip()
-                        if not s or s.startswith("-- "):
-                            continue
-                        if keywords and not any(k in s for k in keywords):
-                            continue
-                        errors.append(s[-240:])
-                except Exception:
-                    pass
-
-            collect(journal_args, ("ERROR", "ERR", "SEGV", "failed", "crash", "RDP"))
-            collect(system_args, ("gnome-shell", "gnome-remote-de", "SEGV", "RDP server"))
-
-        print(f"__REPORT__layout={' | '.join(layout_parts) if layout_parts else 'none'}")
-        print(f"__REPORT__sessions={','.join(remote_ids)}")
-        print("__REPORT__errors=" + "|||".join(errors[-8:]))
-        PY
-        """
-    }
-
-    private static let recoverScript = """
-    set -e
-    MON="$HOME/.config/monitors.xml"
-    BACKUP="none"
-    if [ -f "$MON" ]; then
-      BACKUP="$MON.bak-$(date +%Y%m%d-%H%M%S)"
-      cp "$MON" "$BACKUP"
-      rm -f "$MON"
-    fi
-    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-    TERMINATED=0
-    for sid in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
-      [ -n "$sid" ] || continue
-      remote=$(loginctl show-session "$sid" -p Remote --value 2>/dev/null)
-      type=$(loginctl show-session "$sid" -p Type --value 2>/dev/null)
-      user=$(loginctl show-session "$sid" -p User --value 2>/dev/null)
-      if [ "$remote" = yes ] && [ "$type" = wayland ] && [ "$user" = "$(id -u)" ]; then
-        if loginctl terminate-session "$sid" 2>/dev/null; then
-          TERMINATED=$((TERMINATED+1))
-        fi
-      fi
-    done
-    echo "__RECOVER__ok=1"
-    echo "__RECOVER__backup=$BACKUP"
-    echo "__RECOVER__terminated=$TERMINATED"
-    """
 
     private static func parseValue(_ stdout: String, key: String, namespace: String = "REPORT") -> String? {
         let marker = "__\(namespace)__\(key)="

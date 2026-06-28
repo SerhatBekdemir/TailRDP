@@ -1,18 +1,29 @@
 import SwiftUI
 
-extension Notification.Name {
-    static let showAboutWindow = Notification.Name("TailRDPShowAbout")
-}
-
 struct ContentView: View {
     @EnvironmentObject var store: ProfileStore
     @EnvironmentObject var tailscale: TailscaleService
     @EnvironmentObject var launcher: RDPLauncher
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     @State private var selection: String?
     @State private var sessionEndGeneration: [String: UInt64] = [:]
     @AppStorage(AppSettingsKey.hasCompletedFirstRun) private var hasCompletedFirstRun = false
+    @AppStorage(AppSettingsKey.dismissedDependencyWarning) private var dismissedDepWarning = false
+    @AppStorage(AppSettingsKey.freerdpBinaryPath) private var freerdpOverride = ""
     @State private var showWizard = false
+
+    private var missingDependencyMessage: String? {
+        var missing: [String] = []
+        if !DependencyChecker.freerdp(override: freerdpOverride.isEmpty ? nil : freerdpOverride).found {
+            missing.append("FreeRDP")
+        }
+        if !DependencyChecker.tailscale(override: nil).found {
+            missing.append("Tailscale")
+        }
+        guard !missing.isEmpty else { return nil }
+        return "\(missing.joined(separator: " and ")) not found — open Settings to configure paths or install dependencies."
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -30,6 +41,19 @@ struct ContentView: View {
                 )
             }
         }
+        .safeAreaInset(edge: .top) {
+            if !dismissedDepWarning, let msg = missingDependencyMessage {
+                StatusBannerView(
+                    text: msg,
+                    style: .error,
+                    actionLabel: "Settings",
+                    onAction: { openSettings() },
+                    onDismiss: { dismissedDepWarning = true }
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.3), value: missingDependencyMessage)
         .onChange(of: tailscale.peers) { _, peers in
             store.merge(peers: peers)
             if selection == nil { selectDefault() }
@@ -51,8 +75,6 @@ struct ContentView: View {
         }
         .onChange(of: launcher.sessionEndNotice) { _, notice in
             guard let notice else { return }
-            // Show the correct banner right away — don't leave the green connect ack
-            // sitting on top until the Linux SSH check finishes (~1 s later).
             if !notice.userInitiated, notice.endKind != .loggedOut {
                 store.applySessionOutcome(
                     profileID: notice.profileID,
