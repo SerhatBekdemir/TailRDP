@@ -24,9 +24,19 @@ final class TailscaleService: ObservableObject {
     /// Effective path: a non-empty, executable override from Settings wins;
     /// otherwise the auto-detected candidate.
     var binaryPath: String? {
-        let override = UserDefaults.standard.string(forKey: AppSettingsKey.tailscaleBinaryPath) ?? ""
-        if !override.isEmpty, FileManager.default.isExecutableFile(atPath: override) { return override }
+        if let override = Self.validBinaryOverride() { return override }
         return detectedPath
+    }
+
+    /// Ignore/clear stale Settings overrides that are not executable paths.
+    private static func validBinaryOverride() -> String? {
+        let override = UserDefaults.standard.string(forKey: AppSettingsKey.tailscaleBinaryPath) ?? ""
+        guard !override.isEmpty else { return nil }
+        guard FileManager.default.isExecutableFile(atPath: override) else {
+            UserDefaults.standard.removeObject(forKey: AppSettingsKey.tailscaleBinaryPath)
+            return nil
+        }
+        return override
     }
 
     func refresh() {
@@ -38,18 +48,24 @@ final class TailscaleService: ObservableObject {
         Task.detached(priority: .userInitiated) {
             let res = ProcessRunner.run(bin, ["status", "--json"])
             let parsed = Self.parse(res.stdout)
-            await self.apply(parsed: parsed, stderr: res.stderr)
+            await self.apply(parsed: parsed, stdout: res.stdout, stderr: res.stderr)
         }
     }
 
-    private func apply(parsed: (selfPeer: TailscalePeer?, peers: [TailscalePeer])?, stderr: String) {
+    private func apply(
+        parsed: (selfPeer: TailscalePeer?, peers: [TailscalePeer])?,
+        stdout: String,
+        stderr: String
+    ) {
         isRefreshing = false
         if let parsed {
             selfPeer = parsed.selfPeer
             peers = parsed.peers
             lastError = nil
         } else {
-            let msg = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            let err = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            let out = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            let msg = !err.isEmpty ? err : out
             lastError = msg.isEmpty ? "Could not read tailscale status" : msg
         }
     }

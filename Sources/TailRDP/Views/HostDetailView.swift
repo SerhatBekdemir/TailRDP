@@ -35,6 +35,11 @@ struct HostDetailView: View {
             content
         }
         .onChange(of: profile) { _, _ in store.save() }
+        .onChange(of: launcher.sessionEndNotice) { _, notice in
+            guard let notice, notice.profileID == profile.id else { return }
+            banner = Banner(text: notice.message, isError: true)
+            launcher.clearSessionEndNotice(for: profile.id)
+        }
         .safeAreaInset(edge: .bottom) { bannerView }
     }
 

@@ -10,11 +10,25 @@ struct ProcessResult {
 /// Blocking process execution with captured output and optional stdin.
 /// Call off the main thread for anything network-bound (ssh/scp/tailscale).
 enum ProcessRunner {
+    /// macOS GUI apps inherit a sparse environment (often no SHLVL/TERM).
+    /// Some CLIs — notably `/Applications/Tailscale.app/.../Tailscale` — fail
+    /// without a shell-like environment and print errors to stdout instead of JSON.
+    static func cliEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        if env["SHLVL"] == nil { env["SHLVL"] = "1" }
+        if env["TERM"] == nil { env["TERM"] = "dumb" }
+        if env["TMPDIR"] == nil {
+            env["TMPDIR"] = FileManager.default.temporaryDirectory.path
+        }
+        return env
+    }
+
     @discardableResult
     static func run(_ launchPath: String, _ args: [String], stdin: String? = nil) -> ProcessResult {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: launchPath)
         proc.arguments = args
+        proc.environment = cliEnvironment()
 
         let outPipe = Pipe()
         let errPipe = Pipe()

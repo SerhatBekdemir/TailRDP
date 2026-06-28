@@ -36,5 +36,14 @@ struct TailscaleSettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 460, height: 430)
+        .onAppear {
+            if !binaryOverride.isEmpty,
+               !FileManager.default.isExecutableFile(atPath: binaryOverride) {
+                binaryOverride = ""
+            }
+            if tailscale.selfPeer == nil, !tailscale.isRefreshing {
+                tailscale.refresh()
+            }
+        }
     }
 }

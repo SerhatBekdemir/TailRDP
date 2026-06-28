@@ -3,9 +3,15 @@ import Combine
 
 /// Builds the sdl-freerdp argv from a profile and launches it, feeding the
 /// password over stdin (/from-stdin:force) so it never appears in argv or on disk.
+struct SessionEndNotice: Equatable {
+    let profileID: String
+    let message: String
+}
+
 @MainActor
 final class RDPLauncher: ObservableObject {
     @Published private(set) var activeSessions: Set<String> = []
+    @Published private(set) var sessionEndNotice: SessionEndNotice?
 
     private static let binaryCandidates = [
         "/opt/homebrew/bin/sdl-freerdp",
@@ -19,6 +25,8 @@ final class RDPLauncher: ObservableObject {
     }
 
     private var processes: [String: Process] = [:]
+    private var stderrPipes: [String: Pipe] = [:]
+    private var userDisconnects: Set<String> = []
 
     func isActive(_ id: String) -> Bool { activeSessions.contains(id) }
 
@@ -69,13 +77,38 @@ final class RDPLauncher: ObservableObject {
 
         let password = CredentialStore.shared.password(for: profile.id) ?? ""
 
+        let args = buildArguments(for: profile, password: password)
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bin)
-        proc.arguments = buildArguments(for: profile, password: password)
-        proc.terminationHandler = { [weak self] _ in
+        proc.arguments = args
+        let errPipe = Pipe()
+        proc.standardError = errPipe
+        stderrPipes[profile.id] = errPipe
+
+        proc.terminationHandler = { [weak self] finished in
+            let stderrData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let stderrText = String(decoding: stderrData, as: UTF8.self)
+            let reason: String
+            switch finished.terminationReason {
+            case .exit: reason = "exit"
+            case .uncaughtSignal: reason = "signal"
+            @unknown default: reason = "unknown"
+            }
             Task { @MainActor in
+                let userInitiated = self?.userDisconnects.remove(profile.id) != nil
+                if !userInitiated {
+                    self?.sessionEndNotice = SessionEndNotice(
+                        profileID: profile.id,
+                        message: Self.describeSessionEnd(
+                            stderr: stderrText,
+                            exitCode: finished.terminationStatus,
+                            reason: reason
+                        )
+                    )
+                }
                 self?.activeSessions.remove(profile.id)
                 self?.processes[profile.id] = nil
+                self?.stderrPipes[profile.id] = nil
             }
         }
 
@@ -89,6 +122,26 @@ final class RDPLauncher: ObservableObject {
     }
 
     func disconnect(profileID: String) {
+        userDisconnects.insert(profileID)
         processes[profileID]?.terminate()
+    }
+
+    func clearSessionEndNotice(for profileID: String) {
+        if sessionEndNotice?.profileID == profileID {
+            sessionEndNotice = nil
+        }
+    }
+
+    private static func describeSessionEnd(stderr: String, exitCode: Int32, reason: String) -> String {
+        if stderr.contains("ERRINFO_LOGOFF_BY_USER") {
+            return "Remote session ended — the desktop on the server logged off (often caused by GNOME Shell crashing when launching heavy apps like VS Code on Ubuntu 24.04)."
+        }
+        if reason == "signal" {
+            return "RDP client exited unexpectedly (signal \(exitCode))."
+        }
+        if exitCode != 0 {
+            return "RDP session ended with exit code \(exitCode)."
+        }
+        return "RDP session ended."
     }
 }
