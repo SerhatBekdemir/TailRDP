@@ -2,14 +2,31 @@
 .build/
 .swiftpm/
 Package.resolved
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
 
-# Built app bundle (produced by build.sh, installed to /Applications)
+# Build artifacts (build.sh → TailRDP.app, dist/)
 *.app/
+dist/
 
 # macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+
+# Cursor / local IDE
+.cursor/
 
 # Editor
-*.xcodeproj/
-*.xcworkspace/
 .vscode/
+.idea/
+
+# Secrets & env
+.env
+.env.*
+*.pem
+
+# Logs & debug
+*.log
