@@ -8,6 +8,8 @@ struct ConnectionSettingsView: View {
     @State private var showPassword = false
     @State private var hasStored = false
     @State private var justSaved = false
+    @State private var displayStatus: String?
+    @State private var isDisplayBusy = false
 
     private let resolutions: [(label: String, w: Int, h: Int)] = [
         ("1280 × 720", 1280, 720),
@@ -102,6 +104,32 @@ struct ConnectionSettingsView: View {
                 Toggle("Audio", isOn: $profile.settings.sound)
                 Toggle("Map ⌘ to Ctrl (fixes ⌘C / ⌘V over RDP)", isOn: $profile.settings.mapCmdToCtrl)
                 Toggle("Auto-reconnect on drop", isOn: $profile.settings.autoReconnect)
+                if profile.os == "linux" {
+                    Toggle("Auto-reset risky GNOME display layout before connect",
+                           isOn: $profile.settings.autoRecoverDisplay)
+                    Text("Detects a pinned remote monitor at 200%+ scale in monitors.xml and resets it over SSH before connecting.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if profile.os == "linux" {
+                Section("Remote display recovery") {
+                    if let displayStatus {
+                        Text(displayStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Button("Check remote display") { checkRemoteDisplay() }
+                            .disabled(isDisplayBusy || profile.address.isEmpty)
+                        Button("Reset remote display") { resetRemoteDisplay() }
+                            .disabled(isDisplayBusy || profile.address.isEmpty)
+                    }
+                    Text("Removes ~/.config/monitors.xml (with backup) and ends stuck remote Wayland sessions. Use when the desktop is zoomed or unusable over RDP.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("SSH (for file transfer)") {
@@ -141,5 +169,46 @@ struct ConnectionSettingsView: View {
                 }
             }
         )
+    }
+
+    private func checkRemoteDisplay() {
+        isDisplayBusy = true
+        Task {
+            let result = RemoteDisplayRecovery.inspect(profile)
+            await MainActor.run {
+                isDisplayBusy = false
+                switch result {
+                case .failure(let err):
+                    displayStatus = err.message
+                case .success(let report):
+                    if report.riskyLayout {
+                        displayStatus = "Risky layout: \(report.detail). Reset recommended before connecting."
+                    } else if report.monitorsFileExists {
+                        displayStatus = "monitors.xml present (\(report.detail)). Layout looks OK."
+                    } else {
+                        displayStatus = "No monitors.xml — default layout will apply on next login."
+                    }
+                    if !report.remoteSessionIDs.isEmpty {
+                        displayStatus = (displayStatus ?? "") + " Active remote session(s): \(report.remoteSessionIDs.joined(separator: ", "))."
+                    }
+                }
+            }
+        }
+    }
+
+    private func resetRemoteDisplay() {
+        isDisplayBusy = true
+        Task {
+            let result = RemoteDisplayRecovery.recover(profile)
+            await MainActor.run {
+                isDisplayBusy = false
+                switch result {
+                case .failure(let err):
+                    displayStatus = err.message
+                case .success(let summary):
+                    displayStatus = "Reset complete: \(summary)."
+                }
+            }
+        }
     }
 }

@@ -13,6 +13,8 @@ struct HostDetailView: View {
 
     @State private var tab: Tab = .connection
     @State private var banner: Banner?
+    @State private var showDisplayRecoveryAction = false
+    @State private var isConnecting = false
 
     struct Banner: Identifiable {
         let id = UUID()
@@ -38,6 +40,7 @@ struct HostDetailView: View {
         .onChange(of: launcher.sessionEndNotice) { _, notice in
             guard let notice, notice.profileID == profile.id else { return }
             banner = Banner(text: notice.message, isError: true)
+            showDisplayRecoveryAction = notice.suggestDisplayRecovery
             launcher.clearSessionEndNotice(for: profile.id)
         }
         .safeAreaInset(edge: .bottom) { bannerView }
@@ -79,23 +82,41 @@ struct HostDetailView: View {
             Button {
                 connect()
             } label: {
-                Label("Connect", systemImage: "play.fill").frame(minWidth: 90)
+                if isConnecting {
+                    ProgressView().controlSize(.small).frame(minWidth: 90)
+                } else {
+                    Label("Connect", systemImage: "play.fill").frame(minWidth: 90)
+                }
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(profile.address.isEmpty || !profile.online)
+            .disabled(profile.address.isEmpty || !profile.online || isConnecting)
             .help(profile.online ? "Launch RDP session" : "Machine is offline")
         }
     }
 
     @ViewBuilder private var bannerView: some View {
         if let banner {
-            HStack(spacing: 8) {
-                Image(systemName: banner.isError ? "xmark.octagon.fill" : "checkmark.circle.fill")
-                Text(banner.text).lineLimit(2)
-                Spacer()
-                Button { self.banner = nil } label: { Image(systemName: "xmark") }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: banner.isError ? "xmark.octagon.fill" : "checkmark.circle.fill")
+                    Text(banner.text).lineLimit(3)
+                    Spacer()
+                    Button {
+                        self.banner = nil
+                        showDisplayRecoveryAction = false
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
                     .buttonStyle(.plain)
+                }
+                if showDisplayRecoveryAction, profile.os == "linux", !launcher.isActive(profile.id) {
+                    Button("Reset remote display & reconnect") {
+                        resetDisplayAndConnect()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isConnecting)
+                }
             }
             .font(.callout)
             .foregroundStyle(.white)
@@ -110,6 +131,44 @@ struct HostDetailView: View {
             banner = Banner(text: "Set a password in the Connection tab first.", isError: true)
             return
         }
+        showDisplayRecoveryAction = false
+        isConnecting = true
+        Task {
+            defer { isConnecting = false }
+            if profile.os == "linux", profile.settings.autoRecoverDisplay {
+                switch RemoteDisplayRecovery.recoverIfNeeded(profile) {
+                case .failure(let err):
+                    banner = Banner(text: "Display check failed: \(err.message)", isError: true)
+                    return
+                case .success(let summary):
+                    if let summary {
+                        banner = Banner(text: "Auto-reset remote display (\(summary)). Connecting…", isError: false)
+                    }
+                }
+            }
+            launchSession()
+        }
+    }
+
+    private func resetDisplayAndConnect() {
+        guard CredentialStore.shared.hasPassword(for: profile.id) else { return }
+        showDisplayRecoveryAction = false
+        isConnecting = true
+        Task {
+            defer { isConnecting = false }
+            switch RemoteDisplayRecovery.recover(profile) {
+            case .failure(let err):
+                banner = Banner(text: "Display reset failed: \(err.message)", isError: true)
+                return
+            case .success(let summary):
+                banner = Banner(text: "Display reset (\(summary)). Connecting…", isError: false)
+            }
+            launchSession()
+        }
+    }
+
+    @MainActor
+    private func launchSession() {
         if let err = launcher.launch(profile: profile) {
             banner = Banner(text: err, isError: true)
         } else {

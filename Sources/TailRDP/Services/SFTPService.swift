@@ -21,6 +21,11 @@ enum SFTPService {
 
     static func target(_ p: HostProfile) -> String { "\(p.sshUsername)@\(p.address)" }
 
+    /// Run a shell script on the remote host over SSH. Blocking — use from a Task.
+    static func runScript(_ profile: HostProfile, script: String) -> ProcessResult {
+        ProcessRunner.run(ssh, commonOpts + [target(profile), script])
+    }
+
     /// Single-quote a path for safe interpolation into a remote shell command.
     private static func shq(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"

@@ -47,6 +47,9 @@ struct RDPSettings: Codable, Equatable {
     var sound: Bool = true
     var mapCmdToCtrl: Bool = true   // ⌘ (Super) → Ctrl, so ⌘C/⌘V work over RDP
     var autoReconnect: Bool = true
+    /// Before connecting to Linux hosts, detect a pinned GNOME remote-monitor layout
+    /// (e.g. Meta-0 at 200% scale) and reset it over SSH so the session stays usable.
+    var autoRecoverDisplay: Bool = true
 
     static let `default` = RDPSettings()
 }

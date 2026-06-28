@@ -6,6 +6,7 @@ import Combine
 struct SessionEndNotice: Equatable {
     let profileID: String
     let message: String
+    var suggestDisplayRecovery: Bool = false
 }
 
 @MainActor
@@ -103,7 +104,8 @@ final class RDPLauncher: ObservableObject {
                             stderr: stderrText,
                             exitCode: finished.terminationStatus,
                             reason: reason
-                        )
+                        ),
+                        suggestDisplayRecovery: profile.os == "linux"
                     )
                 }
                 self?.activeSessions.remove(profile.id)
