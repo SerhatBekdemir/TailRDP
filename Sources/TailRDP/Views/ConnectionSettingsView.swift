@@ -53,6 +53,13 @@ struct ConnectionSettingsView: View {
                         CredentialStore.shared.set(password, for: profile.id)
                         hasStored = CredentialStore.shared.hasPassword(for: profile.id)
                         justSaved = true
+                        if hasStored {
+                            store.update(id: profile.id) { p in
+                                p.sessionHealth = SessionHealth()
+                                p.stickyBanner = nil
+                            }
+                            if let updated = store.profile(id: profile.id) { profile = updated }
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     if justSaved {

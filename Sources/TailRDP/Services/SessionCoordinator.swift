@@ -212,6 +212,20 @@ enum SessionCoordinator {
             return SessionEndOutcome(message: notice.message, kind: notice.endKind)
         }
 
+        if isAuthenticationFailure(notice) {
+            store.update(id: notice.profileID) { p in
+                var h = p.health
+                h.lastFailureSummary = notice.message
+                h.lastEndKind = .crashed
+                p.sessionHealth = h
+            }
+            return SessionEndOutcome(
+                message: notice.message,
+                kind: .crashed,
+                actionLabel: "Reconnect"
+            )
+        }
+
         let errInfo = notice.errInfoCode ?? extractErrInfo(from: notice.message)
         var report: RemoteSessionReport?
         if profile.os == "linux" {
@@ -328,5 +342,10 @@ enum SessionCoordinator {
             return nil
         }
         return String(message[range])
+    }
+
+    private static func isAuthenticationFailure(_ notice: SessionEndNotice) -> Bool {
+        notice.message.contains("Could not authenticate")
+            || notice.message.contains("AUTHENTICATION_FAILED")
     }
 }

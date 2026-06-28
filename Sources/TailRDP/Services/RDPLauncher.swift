@@ -144,7 +144,8 @@ final class RDPLauncher: ObservableObject {
         }
 
         if !password.isEmpty {
-            inPipe.fileHandleForWriting.write(Data(password.utf8))
+            // Match ProcessRunner: write after launch, newline-terminated, then close for EOF.
+            inPipe.fileHandleForWriting.write(Data((password + "\n").utf8))
             try? inPipe.fileHandleForWriting.close()
         }
 

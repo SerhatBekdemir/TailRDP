@@ -53,9 +53,15 @@ public enum SessionEndClassifier {
             )
         }
         if exitCode != 0 {
+            let message: String
+            if exitCode == 24 || stderr.contains("passphrase") {
+                message = "Could not authenticate — re-save the password in Connection settings and try again."
+            } else {
+                message = "Connection ended unexpectedly (code \(exitCode))."
+            }
             return SessionEndClassification(
                 kind: .crashed,
-                message: "Connection ended unexpectedly (code \(exitCode)).",
+                message: message,
                 errInfoCode: nil
             )
         }
