@@ -34,16 +34,18 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
         return p
     }
 
+    var isLinux: Bool { os == "linux" }
+
     /// Username passed to FreeRDP — Linux system accounts are lowercase.
     var rdpUsernameForConnect: String {
         let trimmed = rdpUsername.trimmingCharacters(in: .whitespacesAndNewlines)
-        return os == "linux" ? trimmed.lowercased() : trimmed
+        return isLinux ? trimmed.lowercased() : trimmed
     }
 
     mutating func normalizeCredentials() {
         rdpUsername = rdpUsername.trimmingCharacters(in: .whitespacesAndNewlines)
         sshUsername = sshUsername.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard os == "linux" else { return }
+        guard isLinux else { return }
         rdpUsername = rdpUsername.lowercased()
         sshUsername = sshUsername.lowercased()
     }

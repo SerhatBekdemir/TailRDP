@@ -56,7 +56,7 @@ enum QAIntegration {
     }
 
     // Linux remote inspect (non-destructive)
-    if profile.os == "linux" {
+    if profile.isLinux {
       let inspect = await Task.detached { RemoteDisplayRecovery.inspect(profile) }.value
       switch inspect {
       case .success(let report):
@@ -90,7 +90,7 @@ enum QAIntegration {
       launcher: launcher
     )
     check(!connect.isError, "RDP launch (\(connect.message))")
-  if !connect.isError {
+    if !connect.isError {
       try? await Task.sleep(for: .seconds(6))
       check(launcher.isActive(profile.id), "RDP session active after 6s")
       launcher.disconnect(profileID: profile.id)

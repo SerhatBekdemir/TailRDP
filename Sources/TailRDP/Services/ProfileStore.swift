@@ -10,6 +10,7 @@ final class ProfileStore: ObservableObject {
 
     private var flashExpiryTasks: [String: Task<Void, Never>] = [:]
     private static let flashAutoDismissSeconds: UInt64 = 5
+    private static let staleBannerPhrases = ["authenticate", "Sign-in failed", "re-save"]
 
     private let url: URL
 
@@ -48,7 +49,7 @@ final class ProfileStore: ObservableObject {
             p.normalizeCredentials()
             p.settings.normalizeDisplayOptions()
             if let text = p.stickyBanner?.text,
-               text.contains("authenticate") || text.contains("Sign-in failed") || text.contains("re-save") {
+               Self.staleBannerPhrases.contains(where: text.contains) {
                 p.stickyBanner = nil
             }
             p.ensurePausedBanner()
@@ -86,15 +87,11 @@ final class ProfileStore: ObservableObject {
                 var h = SessionHealth()
                 h.lastEndKind = .loggedOut
                 p.sessionHealth = h
-            case .paused:
+            case .paused, .crashed:
                 var h = p.health
-                h.lastEndKind = .paused
+                h.lastEndKind = outcome.kind
                 p.sessionHealth = h
-                p.ensurePausedBanner()
-            case .crashed:
-                var h = p.health
-                h.lastEndKind = .crashed
-                p.sessionHealth = h
+                if outcome.kind == .paused { p.ensurePausedBanner() }
             }
         }
         switch outcome.kind {

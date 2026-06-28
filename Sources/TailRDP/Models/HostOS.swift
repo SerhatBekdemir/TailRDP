@@ -7,8 +7,6 @@ enum HostOS: String, Codable, CaseIterable, Sendable {
     case macOS
     case other
 
-    static let supportedRawValues: Set<String> = Set(allCases.map(\.rawValue))
-
     /// Map Tailscale or stored strings to a supported OS, or nil when not RDP-applicable.
     static func normalize(_ raw: String) -> HostOS? {
         switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {

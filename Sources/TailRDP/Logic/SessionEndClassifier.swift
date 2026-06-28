@@ -18,6 +18,9 @@ public struct SessionEndProductionRecord: Codable, Equatable, Sendable {
 
 /// Pure classification of how an RDP client process ended — testable without SSH.
 public enum SessionEndClassifier {
+    private static let resumePausedMessage = "Session paused. Connect again to resume."
+    private static let windowCloseExitCodes: Set<Int32> = [130, 131, 143, 2, 3, 15]
+
     /// Curated production observations; keep in sync with `Tests/.../session-end-production-records.json`.
     public static let productionRecords: [SessionEndProductionRecord] = [
         .init(name: "Mac window close (131) → paused", loggedOut: false, stderr: "", exitCode: 131, reason: "exit", expectedKind: .paused),
@@ -44,31 +47,32 @@ public enum SessionEndClassifier {
             return SessionEndClassification(kind: .loggedOut, message: "Disconnected.", errInfoCode: nil)
         }
         if let errInfo = firstMatch(in: stderr, pattern: #"ERRINFO_[A-Z0-9_]+"#) {
-            if errInfo == "ERRINFO_LOGOFF_BY_USER" {
+            switch errInfo {
+            case "ERRINFO_LOGOFF_BY_USER":
                 return SessionEndClassification(
                     kind: .paused,
                     message: "Session paused. Your work is still running — connect again to resume.",
                     errInfoCode: errInfo
                 )
-            }
-            if errInfo == "ERRINFO_DISCONNECTED_BY_OTHER_CONNECTION" {
+            case "ERRINFO_DISCONNECTED_BY_OTHER_CONNECTION":
                 return SessionEndClassification(
                     kind: .paused,
                     message: "Session paused. Another client took over — connect again to resume.",
                     errInfoCode: errInfo
                 )
+            default:
+                return SessionEndClassification(
+                    kind: .crashed,
+                    message: rdpErrorLabel(errInfo),
+                    errInfoCode: errInfo
+                )
             }
-            return SessionEndClassification(
-                kind: .crashed,
-                message: rdpErrorLabel(errInfo),
-                errInfoCode: errInfo
-            )
         }
         if !isKnownFailureExit(exitCode: exitCode, stderr: stderr),
-           isClientWindowClosed(exitCode: exitCode, reason: reason, stderr: stderr) {
+           windowCloseExitCodes.contains(exitCode) {
             return SessionEndClassification(
                 kind: .paused,
-                message: "Session paused. Connect again to resume.",
+                message: resumePausedMessage,
                 errInfoCode: nil
             )
         }
@@ -80,12 +84,9 @@ public enum SessionEndClassifier {
             )
         }
         if exitCode != 0 {
-            let message: String
-            if exitCode == 24 || isKnownFailureExit(exitCode: exitCode, stderr: stderr) {
-                message = "Sign-in failed."
-            } else {
-                message = "Connection ended unexpectedly (code \(exitCode))."
-            }
+            let message = isKnownFailureExit(exitCode: exitCode, stderr: stderr)
+                ? "Sign-in failed."
+                : "Connection ended unexpectedly (code \(exitCode))."
             return SessionEndClassification(
                 kind: .crashed,
                 message: message,
@@ -94,14 +95,9 @@ public enum SessionEndClassifier {
         }
         return SessionEndClassification(
             kind: .paused,
-            message: "Session paused. Connect again to resume.",
+            message: resumePausedMessage,
             errInfoCode: nil
         )
-    }
-
-    public static func isClientWindowClosed(exitCode: Int32, reason: String, stderr: String) -> Bool {
-        let windowCloseCodes: Set<Int32> = [130, 131, 143, 2, 3, 15]
-        return windowCloseCodes.contains(exitCode)
     }
 
     /// Run every production record through `classify`. Returns failure count.
@@ -174,9 +170,7 @@ public enum SessionEndClassifier {
 
     private static func rdpErrorLabel(_ code: String) -> String {
         switch code {
-        case "ERRINFO_LOGOFF_BY_USER": return "The remote desktop closed the session."
         case "ERRINFO_SERVER_SHUTDOWN": return "The remote computer shut down."
-        case "ERRINFO_DISCONNECTED_BY_OTHER_CONNECTION": return "Another connection took over this session."
         default: return "The remote session ended (\(code))."
         }
     }
