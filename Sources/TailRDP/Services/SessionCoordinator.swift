@@ -84,25 +84,22 @@ enum SessionCoordinator {
             return SessionEndOutcome(message: "Disconnected.", kind: .loggedOut)
 
         case .paused:
-            let kind = await resolvePausedLoggedOutOrCrash(notice: notice, store: store)
-            if kind == .crashed {
+            let resolved = await resolvePausedLoggedOutOrCrash(notice: notice, store: store)
+            if resolved.kind == .crashed {
                 return await handleCrashEnd(notice: notice, duration: duration, used: used, store: store)
             }
             recordSuccessfulSettings(profileID: notice.profileID, used: used, duration: duration, store: store)
             store.update(id: notice.profileID) { p in
                 var h = SessionHealth()
-                h.lastEndKind = kind
+                h.lastEndKind = resolved.kind
                 p.sessionHealth = h
             }
-            if kind == .loggedOut {
+            if resolved.kind == .loggedOut {
                 return SessionEndOutcome(message: "Disconnected.", kind: .loggedOut)
             }
-            let sshNote: String? = {
-                guard let profile = store.profile(id: notice.profileID), profile.os == "linux" else { return nil }
-                return RemoteDisplayRecovery.remoteSessionState(profile) == .unknown
-                    ? "SSH unavailable — session state unverified."
-                    : nil
-            }()
+            let sshNote = resolved.sshUnknown
+                ? "SSH unavailable — session state unverified."
+                : nil
             return SessionEndOutcome(
                 message: notice.message,
                 kind: .paused,
@@ -173,12 +170,17 @@ enum SessionCoordinator {
 
     // MARK: - Private
 
+    private struct PausedResolution: Equatable {
+        var kind: SessionEndKind
+        var sshUnknown: Bool = false
+    }
+
     private static func resolvePausedLoggedOutOrCrash(
         notice: SessionEndNotice,
         store: ProfileStore
-    ) async -> SessionEndKind {
+    ) async -> PausedResolution {
         guard let profile = store.profile(id: notice.profileID), profile.os == "linux" else {
-            return .paused
+            return PausedResolution(kind: .paused)
         }
         try? await Task.sleep(for: .milliseconds(800))
 
@@ -187,16 +189,16 @@ enum SessionCoordinator {
         }.value
 
         if case .success(let r) = report, RemoteDisplayRecovery.looksLikeRecentCrash(r) {
-            return .crashed
+            return PausedResolution(kind: .crashed)
         }
 
         let active = await Task.detached {
             RemoteDisplayRecovery.remoteSessionState(profile)
         }.value
         switch active {
-        case .active: return .paused
-        case .inactive: return .loggedOut
-        case .unknown: return .paused
+        case .active: return PausedResolution(kind: .paused)
+        case .inactive: return PausedResolution(kind: .loggedOut)
+        case .unknown: return PausedResolution(kind: .paused, sshUnknown: true)
         }
     }
 

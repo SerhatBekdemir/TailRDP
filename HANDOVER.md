@@ -30,7 +30,7 @@ flowchart TB
 
 - **Bundle ID / Keychain service:** `app.tailrdp`
 - **Profile id:** lowercased hostname or manual display name
-- **Min platform:** macOS 15 in `TailRDP.app` Info.plist; SPM `Package.swift` uses `.macOS(.v14)` for Command Line Tools compatibility
+- **Min platform:** macOS 15 (`Package.swift` + `TailRDP.app` Info.plist); arm64 build in `build.sh`
 - **Distribution v1:** source + `./build.sh` → `dist/TailRDP.app` (unsigned, ad-hoc signed)
 
 ## Phased PR map (implemented)

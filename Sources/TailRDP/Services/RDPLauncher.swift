@@ -170,7 +170,6 @@ final class RDPLauncher: ObservableObject {
     private func terminateClients(to profile: HostProfile) async {
         let tracked = processes[profile.id]
         let target = profile.address.isEmpty ? nil : "/v:\(profile.address):\(profile.rdpPort)"
-        let binName = (binaryPath as NSString?)?.lastPathComponent ?? "sdl-freerdp"
         activeSessions.remove(profile.id)
         processes[profile.id] = nil
         stderrPipes[profile.id] = nil
@@ -184,7 +183,7 @@ final class RDPLauncher: ObservableObject {
             guard let target else { return }
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-            proc.arguments = ["-f", "\(binName).*\(target)"]
+            proc.arguments = ["-f", "(sdl-freerdp|xfreerdp).*\(target)"]
             try? proc.run()
             proc.waitUntilExit()
             try? await Task.sleep(for: .milliseconds(250))

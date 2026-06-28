@@ -19,6 +19,16 @@ final class ProfileStore: ObservableObject {
         load()
     }
 
+    /// Isolated store for unit tests — does not load Application Support profiles.
+    init(testProfilesURL: URL) {
+        url = testProfilesURL
+        try? FileManager.default.createDirectory(
+            at: testProfilesURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        profiles = []
+    }
+
     func load() {
         guard let data = try? Data(contentsOf: url),
               let list = try? JSONDecoder().decode([HostProfile].self, from: data) else { return }

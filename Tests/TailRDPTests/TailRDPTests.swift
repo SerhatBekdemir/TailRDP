@@ -62,3 +62,35 @@ final class RecoveryTests: XCTestCase {
         XCTAssertEqual(preset, .resetRemoteDesktop)
     }
 }
+
+@MainActor
+final class ProfileStoreMergeTests: XCTestCase {
+    func testMergeAddsPeersAndMarksVanishedOffline() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TailRDPTests-\(UUID().uuidString)/profiles.json")
+        let store = ProfileStore(testProfilesURL: url)
+        let peer = TailscalePeer(
+            id: "devbox", hostName: "devbox", dnsName: "devbox.ts.net", os: "linux",
+            ipv4: "100.64.0.1", online: true, isSelf: false
+        )
+        store.merge(peers: [peer])
+        XCTAssertEqual(store.profiles.count, 1)
+        XCTAssertTrue(store.profiles[0].online)
+        XCTAssertEqual(store.profiles[0].address, "100.64.0.1")
+
+        store.merge(peers: [])
+        XCTAssertFalse(store.profiles[0].online)
+    }
+
+    func testMergeSkipsSelfPeer() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TailRDPTests-\(UUID().uuidString)/profiles.json")
+        let store = ProfileStore(testProfilesURL: url)
+        let selfPeer = TailscalePeer(
+            id: "me", hostName: "me", dnsName: "me.ts.net", os: "macOS",
+            ipv4: "100.64.0.2", online: true, isSelf: true
+        )
+        store.merge(peers: [selfPeer])
+        XCTAssertTrue(store.profiles.isEmpty)
+    }
+}
