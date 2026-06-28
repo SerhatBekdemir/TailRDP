@@ -2,14 +2,16 @@ import SwiftUI
 
 struct ConnectionSettingsView: View {
     @Binding var profile: HostProfile
+    @EnvironmentObject var store: ProfileStore
     @EnvironmentObject var launcher: RDPLauncher
 
     @State private var password = ""
     @State private var showPassword = false
     @State private var hasStored = false
     @State private var justSaved = false
-    @State private var displayStatus: String?
-    @State private var isDisplayBusy = false
+    @State private var advancedStatus: String?
+    @State private var isAdvancedBusy = false
+    @State private var showAdvanced = false
 
     private let resolutions: [(label: String, w: Int, h: Int)] = [
         ("1280 × 720", 1280, 720),
@@ -28,8 +30,6 @@ struct ConnectionSettingsView: View {
                 Stepper("Port: \(profile.rdpPort)", value: $profile.rdpPort, in: 1...65535)
             }
 
-            // Username above, password below — entered manually, saved to a local
-            // 0600 file (no Keychain → no system password popups).
             Section("Credentials") {
                 TextField("Username", text: $profile.rdpUsername)
                 HStack {
@@ -74,6 +74,35 @@ struct ConnectionSettingsView: View {
                 }
             }
 
+            Section {
+                if profile.health.usingSafeFallback || profile.health.consecutiveFailures >= 2 {
+                    LabeledContent("Used when you Connect") {
+                        Text(RDPSettings.safeFallback.connectSummary).foregroundStyle(.orange)
+                    }
+                    Text("TailRDP is using safe fallback settings after recent failures. A successful session will restore your preferred settings.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else if let last = profile.lastWorking {
+                    LabeledContent("Used when you Connect") {
+                        Text(last.settings.connectSummary).foregroundStyle(.secondary)
+                    }
+                    Text("Saved \(last.savedAt.formatted(date: .abbreviated, time: .shortened)) after a good session.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Connect will use the settings below. After a successful session, TailRDP remembers them automatically.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Button("Use current settings on next Connect") {
+                    SessionCoordinator.promoteCurrentSettings(profileID: profile.id, store: store)
+                    if let updated = store.profile(id: profile.id) { profile = updated }
+                }
+                .disabled(settingsMatchLastWorking)
+            } header: {
+                Text("Connect settings")
+            }
+
             Section("Display") {
                 Toggle("Dynamic resolution (follow window)", isOn: $profile.settings.dynamicResolution)
                 if !profile.settings.dynamicResolution {
@@ -104,31 +133,26 @@ struct ConnectionSettingsView: View {
                 Toggle("Audio", isOn: $profile.settings.sound)
                 Toggle("Map ⌘ to Ctrl (fixes ⌘C / ⌘V over RDP)", isOn: $profile.settings.mapCmdToCtrl)
                 Toggle("Auto-reconnect on drop", isOn: $profile.settings.autoReconnect)
-                if profile.os == "linux" {
-                    Toggle("Auto-reset risky GNOME display layout before connect",
-                           isOn: $profile.settings.autoRecoverDisplay)
-                    Text("Detects a pinned remote monitor at 200%+ scale in monitors.xml and resets it over SSH before connecting.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                Toggle("Fix remote host on crash", isOn: $profile.settings.smartReconnect)
+                Text("Closing the RDP window pauses the session — your work keeps running. TailRDP only fixes the remote host after an unexpected crash, and never reconnects automatically.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
 
             if profile.os == "linux" {
-                Section("Remote display recovery") {
-                    if let displayStatus {
-                        Text(displayStatus)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                Section {
+                    DisclosureGroup("Advanced troubleshooting", isExpanded: $showAdvanced) {
+                        if let advancedStatus {
+                            Text(advancedStatus)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        Button("Check remote host") { checkRemoteStatus() }
+                            .disabled(isAdvancedBusy || profile.address.isEmpty)
+                        Button("Full remote session reset") { resetRemoteSession() }
+                            .disabled(isAdvancedBusy || profile.address.isEmpty)
                     }
-                    HStack {
-                        Button("Check remote display") { checkRemoteDisplay() }
-                            .disabled(isDisplayBusy || profile.address.isEmpty)
-                        Button("Reset remote display") { resetRemoteDisplay() }
-                            .disabled(isDisplayBusy || profile.address.isEmpty)
-                    }
-                    Text("Removes ~/.config/monitors.xml (with backup) and ends stuck remote Wayland sessions. Use when the desktop is zoomed or unusable over RDP.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -137,12 +161,12 @@ struct ConnectionSettingsView: View {
             }
 
             Section("Launch command") {
-                Text(launcher.previewCommand(for: profile))
+                Text(launcher.previewCommand(for: profile.profileForConnect()))
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .padding(.vertical, 2)
-                Text("Password is read from the local 0600 store and passed to FreeRDP at launch — never shown here.")
+                Text("Shows what Connect will run (last good settings when available).")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -154,6 +178,10 @@ struct ConnectionSettingsView: View {
             password = CredentialStore.shared.password(for: profile.id) ?? ""
             justSaved = false
         }
+    }
+
+    private var settingsMatchLastWorking: Bool {
+        profile.lastWorking?.settings == profile.settings
     }
 
     private var resolutionBinding: Binding<String> {
@@ -171,42 +199,38 @@ struct ConnectionSettingsView: View {
         )
     }
 
-    private func checkRemoteDisplay() {
-        isDisplayBusy = true
+    private func checkRemoteStatus() {
+        isAdvancedBusy = true
         Task {
             let result = RemoteDisplayRecovery.inspect(profile)
             await MainActor.run {
-                isDisplayBusy = false
+                isAdvancedBusy = false
                 switch result {
                 case .failure(let err):
-                    displayStatus = err.message
+                    advancedStatus = err.message
                 case .success(let report):
-                    if report.riskyLayout {
-                        displayStatus = "Risky layout: \(report.detail). Reset recommended before connecting."
-                    } else if report.monitorsFileExists {
-                        displayStatus = "monitors.xml present (\(report.detail)). Layout looks OK."
-                    } else {
-                        displayStatus = "No monitors.xml — default layout will apply on next login."
-                    }
-                    if !report.remoteSessionIDs.isEmpty {
-                        displayStatus = (displayStatus ?? "") + " Active remote session(s): \(report.remoteSessionIDs.joined(separator: ", "))."
-                    }
+                    advancedStatus = [
+                        "Layout: \(report.layoutSummary)",
+                        report.remoteSessionIDs.isEmpty
+                            ? "No active remote sessions."
+                            : "Remote sessions: \(report.remoteSessionIDs.joined(separator: ", "))"
+                    ].joined(separator: "\n")
                 }
             }
         }
     }
 
-    private func resetRemoteDisplay() {
-        isDisplayBusy = true
+    private func resetRemoteSession() {
+        isAdvancedBusy = true
         Task {
             let result = RemoteDisplayRecovery.recover(profile)
             await MainActor.run {
-                isDisplayBusy = false
+                isAdvancedBusy = false
                 switch result {
                 case .failure(let err):
-                    displayStatus = err.message
+                    advancedStatus = err.message
                 case .success(let summary):
-                    displayStatus = "Reset complete: \(summary)."
+                    advancedStatus = "Reset complete: \(summary)."
                 }
             }
         }

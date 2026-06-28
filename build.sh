@@ -18,6 +18,12 @@ echo "==> assembling $BUNDLE"
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp "$BIN" "$BUNDLE/Contents/MacOS/$APP"
+if [ -f Resources/AppIcon.icns ]; then
+    cp Resources/AppIcon.icns "$BUNDLE/Contents/Resources/AppIcon.icns"
+    ICON_PLIST='    <key>CFBundleIconFile</key>       <string>AppIcon</string>'
+else
+    ICON_PLIST=""
+fi
 
 cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -35,6 +41,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
     <key>NSPrincipalClass</key>        <string>NSApplication</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>LSApplicationCategoryType</key> <string>public.app-category.utilities</string>
+$ICON_PLIST
 </dict>
 </plist>
 PLIST

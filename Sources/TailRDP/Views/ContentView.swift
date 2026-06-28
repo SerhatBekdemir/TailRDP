@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var store: ProfileStore
     @EnvironmentObject var tailscale: TailscaleService
+    @EnvironmentObject var launcher: RDPLauncher
     @State private var selection: String?
 
     var body: some View {
@@ -28,6 +29,19 @@ struct ContentView: View {
         .onAppear {
             store.merge(peers: tailscale.peers)
             if selection == nil { selectDefault() }
+        }
+        .onChange(of: launcher.sessionEndNotice) { _, notice in
+            guard let notice else { return }
+            Task {
+                let outcome = await SessionCoordinator.handleSessionEnd(
+                    notice: notice,
+                    duration: notice.durationSeconds,
+                    store: store,
+                    launcher: launcher
+                )
+                store.applySessionOutcome(profileID: notice.profileID, outcome: outcome)
+                launcher.clearSessionEndNotice(for: notice.profileID)
+            }
         }
     }
 

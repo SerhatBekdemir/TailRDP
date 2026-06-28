@@ -46,10 +46,59 @@ struct RDPSettings: Codable, Equatable {
     var clipboard: Bool = true
     var sound: Bool = true
     var mapCmdToCtrl: Bool = true   // ⌘ (Super) → Ctrl, so ⌘C/⌘V work over RDP
-    var autoReconnect: Bool = true
-    /// Before connecting to Linux hosts, detect a pinned GNOME remote-monitor layout
-    /// (e.g. Meta-0 at 200% scale) and reset it over SSH so the session stays usable.
-    var autoRecoverDisplay: Bool = true
+    var autoReconnect: Bool = false
+    /// Fix remote host after a crash (never runs on pause or logout).
+    var smartReconnect: Bool = true
 
     static let `default` = RDPSettings()
+
+    enum CodingKeys: String, CodingKey {
+        case dynamicResolution, width, height, fullscreen, multiMonitor
+        case codec, bpp, network, clipboard, sound, mapCmdToCtrl, autoReconnect
+        case smartReconnect
+        case autoDiagnoseOnFailure // legacy
+        case autoRecoverDisplay // legacy
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        dynamicResolution = try c.decodeIfPresent(Bool.self, forKey: .dynamicResolution) ?? false
+        width = try c.decodeIfPresent(Int.self, forKey: .width) ?? 1920
+        height = try c.decodeIfPresent(Int.self, forKey: .height) ?? 1080
+        fullscreen = try c.decodeIfPresent(Bool.self, forKey: .fullscreen) ?? false
+        multiMonitor = try c.decodeIfPresent(Bool.self, forKey: .multiMonitor) ?? false
+        codec = try c.decodeIfPresent(GFXCodec.self, forKey: .codec) ?? .avc444
+        bpp = try c.decodeIfPresent(Int.self, forKey: .bpp) ?? 32
+        network = try c.decodeIfPresent(NetworkType.self, forKey: .network) ?? .lan
+        clipboard = try c.decodeIfPresent(Bool.self, forKey: .clipboard) ?? true
+        sound = try c.decodeIfPresent(Bool.self, forKey: .sound) ?? true
+        mapCmdToCtrl = try c.decodeIfPresent(Bool.self, forKey: .mapCmdToCtrl) ?? true
+        autoReconnect = try c.decodeIfPresent(Bool.self, forKey: .autoReconnect) ?? false
+        if let v = try c.decodeIfPresent(Bool.self, forKey: .smartReconnect) {
+            smartReconnect = v
+        } else if let v = try c.decodeIfPresent(Bool.self, forKey: .autoDiagnoseOnFailure) {
+            smartReconnect = v
+        } else {
+            smartReconnect = try c.decodeIfPresent(Bool.self, forKey: .autoRecoverDisplay) ?? true
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(dynamicResolution, forKey: .dynamicResolution)
+        try c.encode(width, forKey: .width)
+        try c.encode(height, forKey: .height)
+        try c.encode(fullscreen, forKey: .fullscreen)
+        try c.encode(multiMonitor, forKey: .multiMonitor)
+        try c.encode(codec, forKey: .codec)
+        try c.encode(bpp, forKey: .bpp)
+        try c.encode(network, forKey: .network)
+        try c.encode(clipboard, forKey: .clipboard)
+        try c.encode(sound, forKey: .sound)
+        try c.encode(mapCmdToCtrl, forKey: .mapCmdToCtrl)
+        try c.encode(autoReconnect, forKey: .autoReconnect)
+        try c.encode(smartReconnect, forKey: .smartReconnect)
+    }
 }

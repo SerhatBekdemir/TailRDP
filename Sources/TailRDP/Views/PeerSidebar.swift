@@ -67,6 +67,10 @@ struct PeerSidebar: View {
                 Image(systemName: "play.circle.fill")
                     .foregroundStyle(.green)
                     .help("Session running")
+            } else if let banner = profile.stickyBanner {
+                Image(systemName: banner.style == .paused ? "pause.circle.fill" : "exclamationmark.circle.fill")
+                    .foregroundStyle(banner.style == .paused ? Color(red: 0.2, green: 0.45, blue: 0.85) : .red)
+                    .help(banner.style == .paused ? "Session paused" : "Needs reconnect")
             }
         }
         .padding(.vertical, 2)

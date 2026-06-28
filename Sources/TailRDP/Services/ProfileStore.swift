@@ -33,6 +33,24 @@ final class ProfileStore: ObservableObject {
 
     func profile(id: String) -> HostProfile? { profiles.first { $0.id == id } }
 
+    func update(id: String, _ transform: (inout HostProfile) -> Void) {
+        guard let i = profiles.firstIndex(where: { $0.id == id }) else { return }
+        transform(&profiles[i])
+        save()
+    }
+
+    func applySessionOutcome(profileID: String, outcome: SessionEndOutcome) {
+        update(id: profileID) { p in
+            p.stickyBanner = HostStatusBanner.from(outcome)
+        }
+    }
+
+    func clearStickyBanner(profileID: String) {
+        update(id: profileID) { p in
+            p.stickyBanner = nil
+        }
+    }
+
     func upsert(_ profile: HostProfile) {
         if let i = profiles.firstIndex(where: { $0.id == profile.id }) {
             profiles[i] = profile

@@ -11,16 +11,16 @@ struct HostDetailView: View {
         var id: String { rawValue }
     }
 
-    @State private var tab: Tab = .connection
-    @State private var banner: Banner?
-    @State private var showDisplayRecoveryAction = false
-    @State private var isConnecting = false
-
-    struct Banner: Identifiable {
+    /// Short-lived banners (connect ack, validation) — not stored on the profile.
+    private struct TransientBanner: Identifiable {
         let id = UUID()
         let text: String
         let isError: Bool
     }
+
+    @State private var tab: Tab = .connection
+    @State private var transientBanner: TransientBanner?
+    @State private var isConnecting = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -37,12 +37,6 @@ struct HostDetailView: View {
             content
         }
         .onChange(of: profile) { _, _ in store.save() }
-        .onChange(of: launcher.sessionEndNotice) { _, notice in
-            guard let notice, notice.profileID == profile.id else { return }
-            banner = Banner(text: notice.message, isError: true)
-            showDisplayRecoveryAction = notice.suggestDisplayRecovery
-            launcher.clearSessionEndNotice(for: profile.id)
-        }
         .safeAreaInset(edge: .bottom) { bannerView }
     }
 
@@ -63,6 +57,15 @@ struct HostDetailView: View {
                 Text("\(profile.address.isEmpty ? "no address" : profile.address):\(profile.rdpPort)  ·  \(profile.rdpUsername)")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                if let last = profile.lastWorking {
+                    Text("Last good: \(last.settings.connectSummary)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                } else if profile.health.usingSafeFallback || profile.health.consecutiveFailures >= 2 {
+                    Text("Using safe fallback until a session succeeds")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
             }
             Spacer()
             connectButton
@@ -84,6 +87,9 @@ struct HostDetailView: View {
             } label: {
                 if isConnecting {
                     ProgressView().controlSize(.small).frame(minWidth: 90)
+                } else if profile.stickyBanner?.actionLabel != nil {
+                    Label(profile.stickyBanner!.actionLabel!, systemImage: "play.fill")
+                        .frame(minWidth: 90)
                 } else {
                     Label("Connect", systemImage: "play.fill").frame(minWidth: 90)
                 }
@@ -91,88 +97,140 @@ struct HostDetailView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(profile.address.isEmpty || !profile.online || isConnecting)
-            .help(profile.online ? "Launch RDP session" : "Machine is offline")
+            .help(connectHelp)
         }
     }
 
+    private var connectHelp: String {
+        if !profile.online { return "Machine is offline" }
+        if profile.stickyBanner?.style == .paused { return "Resume your paused session" }
+        if profile.stickyBanner?.style == .error { return "Reconnect after the last problem" }
+        if profile.lastWorking != nil { return "Connect using your last good settings" }
+        return "Connect"
+    }
+
     @ViewBuilder private var bannerView: some View {
-        if let banner {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: banner.isError ? "xmark.octagon.fill" : "checkmark.circle.fill")
-                    Text(banner.text).lineLimit(3)
-                    Spacer()
-                    Button {
-                        self.banner = nil
-                        showDisplayRecoveryAction = false
-                    } label: {
-                        Image(systemName: "xmark")
-                    }
+        if let transient = transientBanner {
+            bannerContent(
+                text: transient.text,
+                detail: nil,
+                style: transient.isError ? .error : .success,
+                actionLabel: nil,
+                onDismiss: { transientBanner = nil }
+            )
+        } else if let sticky = profile.stickyBanner {
+            bannerContent(
+                text: sticky.text,
+                detail: sticky.detail,
+                style: sticky.style,
+                actionLabel: sticky.actionLabel,
+                onDismiss: { store.clearStickyBanner(profileID: profile.id) }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func bannerContent(
+        text: String,
+        detail: String?,
+        style: HostStatusBanner.Style,
+        actionLabel: String?,
+        onDismiss: @escaping () -> Void
+    ) -> some View {
+        bannerContent(
+            text: text,
+            detail: detail,
+            style: bannerStyle(for: style),
+            actionLabel: actionLabel,
+            onDismiss: onDismiss
+        )
+    }
+
+    private enum BannerStyle {
+        case success, paused, error
+
+        var icon: String {
+            switch self {
+            case .success: return "checkmark.circle.fill"
+            case .paused: return "pause.circle.fill"
+            case .error: return "xmark.octagon.fill"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .success: return .green
+            case .paused: return Color(red: 0.2, green: 0.45, blue: 0.85)
+            case .error: return .red
+            }
+        }
+    }
+
+    private func bannerStyle(for style: HostStatusBanner.Style) -> BannerStyle {
+        style == .paused ? .paused : .error
+    }
+
+    @ViewBuilder
+    private func bannerContent(
+        text: String,
+        detail: String?,
+        style: BannerStyle,
+        actionLabel: String?,
+        onDismiss: @escaping () -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: style.icon)
+                Text(text).lineLimit(3)
+                Spacer()
+                Button(action: onDismiss) { Image(systemName: "xmark") }
                     .buttonStyle(.plain)
-                }
-                if showDisplayRecoveryAction, profile.os == "linux", !launcher.isActive(profile.id) {
-                    Button("Reset remote display & reconnect") {
-                        resetDisplayAndConnect()
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(isConnecting)
+            }
+            if let detail {
+                Text(detail).font(.caption).opacity(0.9)
+            }
+            if let action = actionLabel {
+                HStack {
+                    Spacer()
+                    Button(action) { connect() }
+                        .buttonStyle(.bordered)
+                        .tint(.white)
                 }
             }
-            .font(.callout)
-            .foregroundStyle(.white)
-            .padding(10)
-            .background(banner.isError ? Color.red : Color.green)
         }
+        .font(.callout)
+        .foregroundStyle(.white)
+        .padding(10)
+        .background(style.color)
     }
 
     private func connect() {
         guard CredentialStore.shared.hasPassword(for: profile.id) else {
             tab = .connection
-            banner = Banner(text: "Set a password in the Connection tab first.", isError: true)
+            transientBanner = TransientBanner(
+                text: "Set a password in the Connection tab first.",
+                isError: true
+            )
             return
         }
-        showDisplayRecoveryAction = false
+        transientBanner = nil
         isConnecting = true
         Task {
             defer { isConnecting = false }
-            if profile.os == "linux", profile.settings.autoRecoverDisplay {
-                switch RemoteDisplayRecovery.recoverIfNeeded(profile) {
-                case .failure(let err):
-                    banner = Banner(text: "Display check failed: \(err.message)", isError: true)
-                    return
-                case .success(let summary):
-                    if let summary {
-                        banner = Banner(text: "Auto-reset remote display (\(summary)). Connecting…", isError: false)
-                    }
-                }
+            let result = await SessionCoordinator.connect(
+                profileID: profile.id,
+                store: store,
+                launcher: launcher
+            )
+            if let updated = store.profile(id: profile.id) {
+                profile = updated
             }
-            launchSession()
-        }
-    }
-
-    private func resetDisplayAndConnect() {
-        guard CredentialStore.shared.hasPassword(for: profile.id) else { return }
-        showDisplayRecoveryAction = false
-        isConnecting = true
-        Task {
-            defer { isConnecting = false }
-            switch RemoteDisplayRecovery.recover(profile) {
-            case .failure(let err):
-                banner = Banner(text: "Display reset failed: \(err.message)", isError: true)
-                return
-            case .success(let summary):
-                banner = Banner(text: "Display reset (\(summary)). Connecting…", isError: false)
+            if result.isError {
+                transientBanner = TransientBanner(text: result.message, isError: true)
+            } else {
+                store.clearStickyBanner(profileID: profile.id)
+                transientBanner = TransientBanner(text: result.message, isError: false)
             }
-            launchSession()
-        }
-    }
-
-    @MainActor
-    private func launchSession() {
-        if let err = launcher.launch(profile: profile) {
-            banner = Banner(text: err, isError: true)
-        } else {
-            banner = Banner(text: "Launching \(profile.displayName)…", isError: false)
         }
     }
 }

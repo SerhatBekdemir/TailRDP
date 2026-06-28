@@ -1,44 +1,111 @@
 import Foundation
 
-/// GNOME remote-desktop (Meta-* virtual monitor) can pin an unusable layout in
-/// `~/.config/monitors.xml` — e.g. 2560×1440 at 200% scale — that persists
-/// across reconnects until the file is removed and the remote session restarted.
-struct RemoteDisplayReport: Equatable {
-    var monitorsFileExists: Bool
-    var riskyLayout: Bool
-    var maxMetaScale: Double
+/// Remote Linux session state and recent errors, discovered over SSH.
+struct RemoteSessionReport: Equatable {
+    var layoutSummary: String
     var remoteSessionIDs: [String]
-    var detail: String
+    var recentErrors: [String]
 
-    var needsRecovery: Bool { riskyLayout }
+    var hasErrors: Bool { !recentErrors.isEmpty }
+}
+
+/// Recovery actions chosen from remote journal + RDP error codes — applied automatically.
+enum RecoveryPreset: Equatable {
+    case none
+    case endStuckSessions
+    case resetRemoteDesktop
+    case useSafeClientSettings
 }
 
 enum RemoteDisplayRecovery {
-    /// Minimum Meta monitor scale that makes a remote session effectively unusable.
-    private static let riskyScaleThreshold = 2.0
-
-    /// Inspect the remote user's GNOME monitor config and active remote sessions.
-    static func inspect(_ profile: HostProfile) -> Result<RemoteDisplayReport, AppError> {
+    static func inspect(_ profile: HostProfile) -> Result<RemoteSessionReport, AppError> {
         guard profile.os == "linux" else {
-            return .success(RemoteDisplayReport(
-                monitorsFileExists: false,
-                riskyLayout: false,
-                maxMetaScale: 1,
-                remoteSessionIDs: [],
-                detail: "Not a Linux host"
-            ))
+            return .success(RemoteSessionReport(layoutSummary: "Not a Linux host", remoteSessionIDs: [], recentErrors: []))
         }
-        let res = SFTPService.runScript(profile, script: inspectScript)
-        if !res.ok && !res.stdout.contains("__REPORT__") {
-            let msg = res.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            return .fail(msg.isEmpty ? "SSH inspect failed (exit \(res.exitCode))" : msg)
-        }
-        return .success(parseReport(res.stdout))
+        return runReportScript(profile, sinceMinutes: nil)
     }
 
-    /// Back up and remove `monitors.xml`, then terminate stuck remote Wayland sessions.
+    static func discoverFailure(_ profile: HostProfile) -> Result<RemoteSessionReport, AppError> {
+        guard profile.os == "linux" else {
+            return .success(RemoteSessionReport(layoutSummary: "", remoteSessionIDs: [], recentErrors: []))
+        }
+        return runReportScript(profile, sinceMinutes: 5)
+    }
+
+    static func chooseRecovery(errInfo: String?, report: RemoteSessionReport?, failureCount: Int) -> RecoveryPreset {
+        if let errInfo, isBenignDisconnect(errInfo) { return .none }
+
+        let errors = (report?.recentErrors ?? []).joined(separator: "\n")
+        let combined = [errInfo ?? "", errors].joined(separator: "\n").lowercased()
+
+        if combined.contains("segv")
+            || (combined.contains("gnome-shell") && combined.contains("signal")) {
+            return .resetRemoteDesktop
+        }
+        if combined.contains("rdp server stopped") && failureCount >= 2 {
+            return .resetRemoteDesktop
+        }
+        if (report?.remoteSessionIDs.count ?? 0) > 1 {
+            return .endStuckSessions
+        }
+        if errInfo == "ERRINFO_SERVER_SHUTDOWN" {
+            return failureCount >= 2 ? .resetRemoteDesktop : .endStuckSessions
+        }
+        if failureCount >= 2 {
+            return .useSafeClientSettings
+        }
+        return .none
+    }
+
+    private static func isBenignDisconnect(_ code: String) -> Bool {
+        switch code {
+        case "ERRINFO_LOGOFF_BY_USER",
+             "ERRINFO_DISCONNECTED_BY_OTHER_CONNECTION":
+            return true
+        default:
+            return false
+        }
+    }
+
+    static func looksLikeRecentCrash(_ report: RemoteSessionReport) -> Bool {
+        let combined = report.recentErrors.joined(separator: "\n").lowercased()
+        return combined.contains("segv")
+            || combined.contains("core dumped")
+            || (combined.contains("gnome-shell") && combined.contains("signal"))
+            || (combined.contains("gnome-remote-de") && combined.contains("stopped")
+                && combined.contains("segv"))
+    }
+
+    static func hasActiveRemoteSession(_ profile: HostProfile) -> Bool {
+        guard profile.os == "linux" else { return false }
+        if case .success(let report) = inspect(profile) {
+            return !report.remoteSessionIDs.isEmpty
+        }
+        return true // SSH unavailable — assume paused so we don't mislabel a live session.
+    }
+
+    static func apply(_ preset: RecoveryPreset, profile: HostProfile) -> Result<String, AppError> {
+        switch preset {
+        case .none: return .success("")
+        case .endStuckSessions: return terminateRemoteSessions(profile)
+        case .resetRemoteDesktop: return recover(profile)
+        case .useSafeClientSettings: return .success("will use fallback display settings")
+        }
+    }
+
+    static func terminateRemoteSessions(_ profile: HostProfile) -> Result<String, AppError> {
+        guard profile.os == "linux" else { return .fail("Only applies to Linux hosts") }
+        let res = SFTPService.runScript(profile, script: terminateSessionsScript)
+        if !res.ok && !res.stdout.contains("__RECOVER__ok") {
+            let msg = res.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .fail(msg.isEmpty ? "Could not end remote sessions (exit \(res.exitCode))" : msg)
+        }
+        let n = parseValue(res.stdout, key: "terminated", namespace: "RECOVER") ?? "0"
+        return .success(n == "0" ? "cleared connection state" : "ended \(n) stuck remote session(s)")
+    }
+
     static func recover(_ profile: HostProfile) -> Result<String, AppError> {
-        guard profile.os == "linux" else { return .fail("Display recovery only applies to Linux hosts") }
+        guard profile.os == "linux" else { return .fail("Session recovery only applies to Linux hosts") }
         let res = SFTPService.runScript(profile, script: recoverScript)
         if !res.ok && !res.stdout.contains("__RECOVER__ok") {
             let msg = res.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -47,99 +114,141 @@ enum RemoteDisplayRecovery {
         let backup = parseValue(res.stdout, key: "backup", namespace: "RECOVER") ?? ""
         let terminated = parseValue(res.stdout, key: "terminated", namespace: "RECOVER") ?? "0"
         var parts: [String] = []
-        if !backup.isEmpty { parts.append("backed up monitors.xml") }
+        if backup != "none", !backup.isEmpty { parts.append("reset remote display config") }
         if terminated != "0" { parts.append("ended \(terminated) remote session(s)") }
-        if parts.isEmpty { parts.append("remote display reset") }
+        if parts.isEmpty { parts.append("remote session reset") }
         return .success(parts.joined(separator: ", "))
     }
 
-    /// Inspect and recover when needed — intended to run before RDP connect.
-    static func recoverIfNeeded(_ profile: HostProfile) -> Result<String?, AppError> {
-        switch inspect(profile) {
-        case .failure(let err): return .failure(err)
-        case .success(let report) where !report.needsRecovery:
-            return .success(nil)
-        case .success:
-            switch recover(profile) {
-            case .failure(let err): return .failure(err)
-            case .success(let summary): return .success(summary)
-            }
+    static func plainRecoveryLabel(_ preset: RecoveryPreset) -> String {
+        switch preset {
+        case .none: return ""
+        case .endStuckSessions: return "Cleared a stuck remote session"
+        case .resetRemoteDesktop: return "Reset the remote desktop session"
+        case .useSafeClientSettings: return "Switched to fallback display settings"
         }
     }
 
-    // MARK: - Remote scripts
-
-    private static let inspectScript = """
-    python3 - <<'PY'
-    import os, re, subprocess, xml.etree.ElementTree as ET
-
-    home = os.path.expanduser("~")
-    mon_path = os.path.join(home, ".config", "monitors.xml")
-    exists = os.path.isfile(mon_path)
-    risky = False
-    max_scale = 1.0
-    detail_parts = []
-
-    if exists:
-        try:
-            root = ET.parse(mon_path).getroot()
-            for cfg in root.findall("configuration"):
-                for logical in cfg.findall("logicalmonitor"):
-                    scale_el = logical.find("scale")
-                    scale = float(scale_el.text) if scale_el is not None and scale_el.text else 1.0
-                    connectors = [
-                        m.find("connector").text
-                        for m in logical.findall("monitor")
-                        if m.find("connector") is not None and m.find("connector").text
-                    ]
-                    meta = [c for c in connectors if c and c.startswith("Meta")]
-                    if meta:
-                        max_scale = max(max_scale, scale)
-                        w = logical.find("width")
-                        h = logical.find("height")
-                        wh = ""
-                        if w is not None and h is not None and w.text and h.text:
-                            wh = f" {w.text}x{h.text}"
-                        detail_parts.append(f"{meta[0]}{wh} @{scale:g}x")
-                        if scale >= \(riskyScaleThreshold):
-                            risky = True
-        except Exception as e:
-            detail_parts.append(f"parse error: {e}")
-
-    uid = os.getuid()
-    remote_ids = []
-    try:
-        out = subprocess.check_output(["loginctl", "list-sessions", "--no-legend"], text=True)
-        for line in out.splitlines():
-            parts = line.split()
-            if not parts:
-                continue
-            sid = parts[0]
-            show = subprocess.check_output(
-                ["loginctl", "show-session", sid, "-p", "Remote", "-p", "Type", "-p", "User"],
-                text=True
-            )
-            fields = dict(
-                ln.split("=", 1) for ln in show.splitlines() if "=" in ln
-            )
-            if fields.get("Remote") == "yes" and fields.get("Type") == "wayland":
-                if fields.get("User", "").strip() == str(uid):
-                    remote_ids.append(sid)
-    except Exception:
-        pass
-
-    print(f"__REPORT__exists={int(exists)}")
-    print(f"__REPORT__risky={int(risky)}")
-    print(f"__REPORT__max_scale={max_scale:g}")
-    print(f"__REPORT__sessions={','.join(remote_ids)}")
-    print(f"__REPORT__detail={' | '.join(detail_parts) if detail_parts else 'ok'}")
-    PY
+    private static let terminateSessionsScript = """
+    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    TERMINATED=0
+    for sid in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
+      [ -n "$sid" ] || continue
+      remote=$(loginctl show-session "$sid" -p Remote --value 2>/dev/null)
+      type=$(loginctl show-session "$sid" -p Type --value 2>/dev/null)
+      user=$(loginctl show-session "$sid" -p User --value 2>/dev/null)
+      if [ "$remote" = yes ] && [ "$type" = wayland ] && [ "$user" = "$(id -u)" ]; then
+        if loginctl terminate-session "$sid" 2>/dev/null; then
+          TERMINATED=$((TERMINATED+1))
+        fi
+      fi
+    done
+    echo "__RECOVER__ok=1"
+    echo "__RECOVER__terminated=$TERMINATED"
     """
+
+    private static func runReportScript(_ profile: HostProfile, sinceMinutes: Int?) -> Result<RemoteSessionReport, AppError> {
+        let res = SFTPService.runScript(profile, script: reportScript(sinceMinutes: sinceMinutes))
+        if !res.ok && !res.stdout.contains("__REPORT__") {
+            let msg = res.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .fail(msg.isEmpty ? "SSH inspect failed (exit \(res.exitCode))" : msg)
+        }
+        let errors = parseValue(res.stdout, key: "errors")?
+            .split(separator: "|||").map(String.init).filter { !$0.isEmpty } ?? []
+        return .success(RemoteSessionReport(
+            layoutSummary: parseValue(res.stdout, key: "layout") ?? "unknown",
+            remoteSessionIDs: parseValue(res.stdout, key: "sessions")?
+                .split(separator: ",").map(String.init).filter { !$0.isEmpty } ?? [],
+            recentErrors: errors
+        ))
+    }
+
+    private static func reportScript(sinceMinutes: Int?) -> String {
+        let envPrefix = sinceMinutes.map { "SINCE_MINUTES=\($0) " } ?? ""
+        return """
+        \(envPrefix)python3 - <<'PY'
+        import os, subprocess, xml.etree.ElementTree as ET
+
+        since = os.environ.get("SINCE_MINUTES", "").strip()
+        layout_parts = []
+        mon_path = os.path.join(os.path.expanduser("~"), ".config", "monitors.xml")
+        if os.path.isfile(mon_path):
+            try:
+                root = ET.parse(mon_path).getroot()
+                for cfg in root.findall("configuration"):
+                    for logical in cfg.findall("logicalmonitor"):
+                        scale_el = logical.find("scale")
+                        scale = float(scale_el.text) if scale_el is not None and scale_el.text else 1.0
+                        connectors = [
+                            m.find("connector").text
+                            for m in logical.findall("monitor")
+                            if m.find("connector") is not None and m.find("connector").text
+                        ]
+                        mode = logical.find(".//mode")
+                        wh = ""
+                        if mode is not None:
+                            w, h = mode.find("width"), mode.find("height")
+                            if w is not None and h is not None and w.text and h.text:
+                                wh = f" {w.text}x{h.text}"
+                        names = ",".join(connectors) if connectors else "remote"
+                        layout_parts.append(f"{names}{wh} @{scale:g}x")
+            except Exception as e:
+                layout_parts.append(f"monitors.xml: {e}")
+        else:
+            layout_parts.append("default layout")
+
+        uid = os.getuid()
+        remote_ids = []
+        try:
+            out = subprocess.check_output(["loginctl", "list-sessions", "--no-legend"], text=True)
+            for line in out.splitlines():
+                parts = line.split()
+                if not parts:
+                    continue
+                sid = parts[0]
+                show = subprocess.check_output(
+                    ["loginctl", "show-session", sid, "-p", "Remote", "-p", "Type", "-p", "User"],
+                    text=True
+                )
+                fields = dict(ln.split("=", 1) for ln in show.splitlines() if "=" in ln)
+                if fields.get("Remote") == "yes" and fields.get("Type") == "wayland":
+                    if fields.get("User", "").strip() == str(uid):
+                        remote_ids.append(sid)
+        except Exception:
+            pass
+
+        errors = []
+        if since:
+            journal_args = ["journalctl", "--user", "-n", "60", "--no-pager", f"--since={since} min ago"]
+            system_args = ["journalctl", "-n", "80", "--no-pager", f"--since={since} min ago"]
+
+            def collect(args, keywords):
+                try:
+                    out = subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL)
+                    for line in out.splitlines():
+                        s = line.strip()
+                        if not s or s.startswith("-- "):
+                            continue
+                        if keywords and not any(k in s for k in keywords):
+                            continue
+                        errors.append(s[-240:])
+                except Exception:
+                    pass
+
+            collect(journal_args, ("ERROR", "ERR", "SEGV", "failed", "crash", "RDP"))
+            collect(system_args, ("gnome-shell", "gnome-remote-de", "SEGV", "RDP server"))
+
+        print(f"__REPORT__layout={' | '.join(layout_parts) if layout_parts else 'none'}")
+        print(f"__REPORT__sessions={','.join(remote_ids)}")
+        print("__REPORT__errors=" + "|||".join(errors[-8:]))
+        PY
+        """
+    }
 
     private static let recoverScript = """
     set -e
     MON="$HOME/.config/monitors.xml"
-    BACKUP=""
+    BACKUP="none"
     if [ -f "$MON" ]; then
       BACKUP="$MON.bak-$(date +%Y%m%d-%H%M%S)"
       cp "$MON" "$BACKUP"
@@ -159,20 +268,9 @@ enum RemoteDisplayRecovery {
       fi
     done
     echo "__RECOVER__ok=1"
-    echo "__RECOVER__backup=${BACKUP:-none}"
+    echo "__RECOVER__backup=$BACKUP"
     echo "__RECOVER__terminated=$TERMINATED"
     """
-
-    private static func parseReport(_ stdout: String) -> RemoteDisplayReport {
-        RemoteDisplayReport(
-            monitorsFileExists: parseValue(stdout, key: "exists") == "1",
-            riskyLayout: parseValue(stdout, key: "risky") == "1",
-            maxMetaScale: Double(parseValue(stdout, key: "max_scale") ?? "1") ?? 1,
-            remoteSessionIDs: parseValue(stdout, key: "sessions")?
-                .split(separator: ",").map(String.init).filter { !$0.isEmpty } ?? [],
-            detail: parseValue(stdout, key: "detail") ?? ""
-        )
-    }
 
     private static func parseValue(_ stdout: String, key: String, namespace: String = "REPORT") -> String? {
         let marker = "__\(namespace)__\(key)="
