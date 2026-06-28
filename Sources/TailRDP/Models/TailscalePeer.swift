@@ -10,6 +10,6 @@ struct TailscalePeer: Identifiable, Equatable {
     let online: Bool
     let isSelf: Bool
 
-    /// RDP only makes sense for machines that can run a remote-desktop server.
-    var isRDPCandidate: Bool { os == "linux" || os == "windows" }
+    /// All tailnet peers except this Mac appear in the sidebar; user configures RDP per host.
+    var isRDPCandidate: Bool { !isSelf }
 }

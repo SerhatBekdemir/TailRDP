@@ -1,11 +1,18 @@
 import SwiftUI
 
+extension Notification.Name {
+    static let showAboutWindow = Notification.Name("TailRDPShowAbout")
+}
+
 struct ContentView: View {
     @EnvironmentObject var store: ProfileStore
     @EnvironmentObject var tailscale: TailscaleService
     @EnvironmentObject var launcher: RDPLauncher
+    @Environment(\.openWindow) private var openWindow
     @State private var selection: String?
     @State private var sessionEndGeneration: [String: UInt64] = [:]
+    @AppStorage(AppSettingsKey.hasCompletedFirstRun) private var hasCompletedFirstRun = false
+    @State private var showWizard = false
 
     var body: some View {
         NavigationSplitView {
@@ -28,8 +35,19 @@ struct ContentView: View {
             if selection == nil { selectDefault() }
         }
         .onAppear {
+            if !hasCompletedFirstRun {
+                showWizard = true
+            }
             if !tailscale.peers.isEmpty { store.merge(peers: tailscale.peers) }
             if selection == nil { selectDefault() }
+        }
+        .sheet(isPresented: $showWizard) {
+            FirstRunWizardView(isPresented: $showWizard)
+                .environmentObject(tailscale)
+                .environmentObject(store)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showAboutWindow)) { _ in
+            openWindow(id: "about")
         }
         .onChange(of: launcher.sessionEndNotice) { _, notice in
             guard let notice else { return }

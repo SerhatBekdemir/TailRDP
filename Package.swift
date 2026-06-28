@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "TailRDP",
             path: "Sources/TailRDP"
+        ),
+        .testTarget(
+            name: "TailRDPTests",
+            dependencies: ["TailRDP"],
+            path: "Tests/TailRDPTests"
         )
     ]
 )

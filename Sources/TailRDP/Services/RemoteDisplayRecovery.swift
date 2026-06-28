@@ -23,6 +23,13 @@ public enum RecoveryPreset: Equatable {
     case useSafeClientSettings
 }
 
+/// Whether a remote Linux session is still active, ended, or could not be verified.
+public enum RemoteSessionState: Equatable {
+    case active
+    case inactive
+    case unknown
+}
+
 public enum RemoteDisplayRecovery {
     static func inspect(_ profile: HostProfile) -> Result<RemoteSessionReport, AppError> {
         guard profile.os == "linux" else {
@@ -82,12 +89,18 @@ public enum RemoteDisplayRecovery {
                 && combined.contains("segv"))
     }
 
-    static func hasActiveRemoteSession(_ profile: HostProfile) -> Bool {
-        guard profile.os == "linux" else { return false }
-        if case .success(let report) = inspect(profile) {
-            return !report.remoteSessionIDs.isEmpty
+    static func remoteSessionState(_ profile: HostProfile) -> RemoteSessionState {
+        guard profile.os == "linux" else { return .inactive }
+        switch inspect(profile) {
+        case .failure:
+            return .unknown
+        case .success(let report):
+            return report.remoteSessionIDs.isEmpty ? .inactive : .active
         }
-        return true // SSH unavailable — assume paused so we don't mislabel a live session.
+    }
+
+    static func hasActiveRemoteSession(_ profile: HostProfile) -> Bool {
+        remoteSessionState(profile) == .active
     }
 
     static func apply(_ preset: RecoveryPreset, profile: HostProfile) -> Result<String, AppError> {

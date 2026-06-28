@@ -92,13 +92,16 @@ struct HostDetailView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(profile.address.isEmpty || !profile.online || isConnecting || isEndingRemote)
+            .disabled(profile.address.isEmpty || isConnecting || isEndingRemote)
             .help(connectHelp)
         }
     }
 
     private var connectHelp: String {
-        if !profile.online { return "Machine is offline" }
+        if !profile.online, !profile.address.isEmpty {
+            return "Tailscale reports offline — connect anyway using the saved address"
+        }
+        if !profile.online { return "Set an address to connect" }
         if profile.stickyBanner?.style == .paused { return "Resume your paused session" }
         if profile.stickyBanner?.style == .error { return "Reconnect after the last problem" }
         if profile.lastWorking != nil { return "Connect using your last good settings" }

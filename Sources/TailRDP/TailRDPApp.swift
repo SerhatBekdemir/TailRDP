@@ -25,6 +25,11 @@ struct TailRDPApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandGroup(replacing: .appInfo) {
+                Button("About TailRDP") {
+                    NotificationCenter.default.post(name: .showAboutWindow, object: nil)
+                }
+            }
             CommandGroup(after: .toolbar) {
                 Button("Refresh Tailnet") { tailscale.refresh() }
                     .keyboardShortcut("r", modifiers: .command)
@@ -34,6 +39,15 @@ struct TailRDPApp: App {
         Settings {
             TailscaleSettingsView()
                 .environmentObject(tailscale)
+                .environmentObject(store)
         }
+
+        Window("About TailRDP", id: "about") {
+            AboutView()
+                .environmentObject(tailscale)
+                .environmentObject(launcher)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
     }
 }

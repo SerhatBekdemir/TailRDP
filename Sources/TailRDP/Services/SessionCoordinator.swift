@@ -97,9 +97,16 @@ enum SessionCoordinator {
             if kind == .loggedOut {
                 return SessionEndOutcome(message: "Disconnected.", kind: .loggedOut)
             }
+            let sshNote: String? = {
+                guard let profile = store.profile(id: notice.profileID), profile.os == "linux" else { return nil }
+                return RemoteDisplayRecovery.remoteSessionState(profile) == .unknown
+                    ? "SSH unavailable — session state unverified."
+                    : nil
+            }()
             return SessionEndOutcome(
                 message: notice.message,
                 kind: .paused,
+                fixSummary: sshNote,
                 actionLabel: "Resume"
             )
 
@@ -184,9 +191,13 @@ enum SessionCoordinator {
         }
 
         let active = await Task.detached {
-            RemoteDisplayRecovery.hasActiveRemoteSession(profile)
+            RemoteDisplayRecovery.remoteSessionState(profile)
         }.value
-        return active ? .paused : .loggedOut
+        switch active {
+        case .active: return .paused
+        case .inactive: return .loggedOut
+        case .unknown: return .paused
+        }
     }
 
     private static func handleCrashEnd(

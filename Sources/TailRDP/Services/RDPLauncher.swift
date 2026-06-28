@@ -19,15 +19,13 @@ final class RDPLauncher: ObservableObject {
     @Published private(set) var activeSessions: Set<String> = []
     @Published private(set) var sessionEndNotice: SessionEndNotice?
 
-    private static let binaryCandidates = [
-        "/opt/homebrew/bin/sdl-freerdp",
-        "/usr/local/bin/sdl-freerdp",
-        "/opt/homebrew/bin/xfreerdp",
-        "/usr/local/bin/xfreerdp"
-    ]
+    var detectedPath: String? {
+        DependencyChecker.freerdp(override: nil).path
+    }
 
     var binaryPath: String? {
-        Self.binaryCandidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+        let override = UserDefaults.standard.string(forKey: AppSettingsKey.freerdpBinaryPath)
+        return DependencyChecker.freerdp(override: override).path
     }
 
     private var processes: [String: Process] = [:]
@@ -44,13 +42,13 @@ final class RDPLauncher: ObservableObject {
         sessionSettingsUsed[profileID]
     }
 
-    func buildArguments(for profile: HostProfile, password: String?) -> [String] {
+    func buildArguments(for profile: HostProfile, includeStdin: Bool) -> [String] {
         let s = profile.settings
         var a: [String] = [
             "/v:\(profile.address):\(profile.rdpPort)",
             "/u:\(profile.rdpUsername)"
         ]
-        if let password, !password.isEmpty { a.append("/p:\(password)") }
+        if includeStdin { a.append("/from-stdin:force") }
         a += [
             "/sec:nla",
             "/cert:ignore",
@@ -75,8 +73,12 @@ final class RDPLauncher: ObservableObject {
 
     func previewCommand(for profile: HostProfile) -> String {
         let bin = (binaryPath as NSString?)?.lastPathComponent ?? "sdl-freerdp"
-        let masked = CredentialStore.shared.hasPassword(for: profile.id) ? "••••••" : nil
-        return ([bin] + buildArguments(for: profile, password: masked)).joined(separator: " ")
+        let pwd = CredentialStore.shared.hasPassword(for: profile.id) ? "(stdin)" : nil
+        var args = buildArguments(for: profile, includeStdin: pwd != nil)
+        if pwd != nil, let idx = args.firstIndex(of: "/from-stdin:force") {
+            args[idx] = "/from-stdin:(stdin)"
+        }
+        return ([bin] + args).joined(separator: " ")
     }
 
     func launch(profile: HostProfile) async -> String? {
@@ -85,23 +87,23 @@ final class RDPLauncher: ObservableObject {
         }
         guard !profile.address.isEmpty else { return "No address set for this machine" }
 
-        // Bump generation before killing any prior client so its termination handler is ignored.
         let generation = (sessionGeneration[profile.id] ?? 0) + 1
         sessionGeneration[profile.id] = generation
 
-        // Drop a stuck local client before opening a new connection to the same host.
         await terminateClients(to: profile)
 
         let password = CredentialStore.shared.password(for: profile.id) ?? ""
-
-        let args = buildArguments(for: profile, password: password)
+        let args = buildArguments(for: profile, includeStdin: !password.isEmpty)
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bin)
         proc.arguments = args
         let errPipe = Pipe()
         proc.standardError = errPipe
+        let inPipe = Pipe()
+        proc.standardInput = inPipe
         stderrPipes[profile.id] = errPipe
 
+        let profileID = profile.id
         proc.terminationHandler = { [weak self] finished in
             let stderrData = errPipe.fileHandleForReading.readDataToEndOfFile()
             let stderrText = String(decoding: stderrData, as: UTF8.self)
@@ -112,10 +114,10 @@ final class RDPLauncher: ObservableObject {
             @unknown default: reason = "unknown"
             }
             Task { @MainActor in
-                guard self?.sessionGeneration[profile.id] == generation else { return }
-                let started = self?.sessionStartedAt[profile.id] ?? Date()
+                guard self?.sessionGeneration[profileID] == generation else { return }
+                let started = self?.sessionStartedAt[profileID] ?? Date()
                 let duration = Date().timeIntervalSince(started)
-                let loggedOut = self?.userDisconnects.remove(profile.id) != nil
+                let loggedOut = self?.userDisconnects.remove(profileID) != nil
                 let end = SessionEndClassifier.classify(
                     loggedOut: loggedOut,
                     stderr: stderrText,
@@ -123,22 +125,27 @@ final class RDPLauncher: ObservableObject {
                     reason: reason
                 )
                 self?.sessionEndNotice = SessionEndNotice(
-                    profileID: profile.id,
+                    profileID: profileID,
                     message: end.message,
                     endKind: end.kind,
                     errInfoCode: end.errInfoCode,
                     durationSeconds: duration,
                     userInitiated: loggedOut
                 )
-                self?.activeSessions.remove(profile.id)
-                self?.processes[profile.id] = nil
-                self?.stderrPipes[profile.id] = nil
-                self?.sessionStartedAt[profile.id] = nil
+                self?.activeSessions.remove(profileID)
+                self?.processes[profileID] = nil
+                self?.stderrPipes[profileID] = nil
+                self?.sessionStartedAt[profileID] = nil
             }
         }
 
         do { try proc.run() } catch {
             return "launch failed: \(error.localizedDescription)"
+        }
+
+        if !password.isEmpty {
+            inPipe.fileHandleForWriting.write(Data(password.utf8))
+            try? inPipe.fileHandleForWriting.close()
         }
 
         processes[profile.id] = proc
@@ -163,6 +170,7 @@ final class RDPLauncher: ObservableObject {
     private func terminateClients(to profile: HostProfile) async {
         let tracked = processes[profile.id]
         let target = profile.address.isEmpty ? nil : "/v:\(profile.address):\(profile.rdpPort)"
+        let binName = (binaryPath as NSString?)?.lastPathComponent ?? "sdl-freerdp"
         activeSessions.remove(profile.id)
         processes[profile.id] = nil
         stderrPipes[profile.id] = nil
@@ -176,7 +184,7 @@ final class RDPLauncher: ObservableObject {
             guard let target else { return }
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-            proc.arguments = ["-f", target]
+            proc.arguments = ["-f", "\(binName).*\(target)"]
             try? proc.run()
             proc.waitUntilExit()
             try? await Task.sleep(for: .milliseconds(250))

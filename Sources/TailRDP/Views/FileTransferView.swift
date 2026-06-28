@@ -39,10 +39,14 @@ struct FileTransferView: View {
         }
         .onAppear {
             if remoteDir.isEmpty {
-                remoteDir = profile.lastRemoteDir.isEmpty ? "/home/\(profile.sshUsername)" : profile.lastRemoteDir
+                if !profile.lastRemoteDir.isEmpty {
+                    remoteDir = profile.lastRemoteDir
+                } else {
+                    resolveRemoteHome()
+                }
             }
             loadLocal()
-            loadRemote()
+            if !remoteDir.isEmpty { loadRemote() }
         }
     }
 
@@ -79,7 +83,7 @@ struct FileTransferView: View {
                 title: profile.displayName,
                 path: remoteDir,
                 onUp: { navigateRemote(to: parentPath(remoteDir)) },
-                onHome: { navigateRemote(to: "/home/\(profile.sshUsername)") },
+                onHome: { navigateRemote(to: remoteHomeFallback()) },
                 onReload: loadRemote
             )
             if let remoteError {
@@ -215,6 +219,24 @@ struct FileTransferView: View {
     }
 
     // MARK: Remote FS
+
+    private func remoteHomeFallback() -> String {
+        if remoteDir.hasPrefix("/home/") || remoteDir.hasPrefix("/Users/") {
+            return remoteDir.split(separator: "/").prefix(3).joined(separator: "/")
+        }
+        return "/home/\(profile.sshUsername)"
+    }
+
+    private func resolveRemoteHome() {
+        let p = profile
+        Task.detached(priority: .userInitiated) {
+            let home = SFTPService.remoteHomeDirectory(p)
+            await MainActor.run {
+                remoteDir = home ?? "/home/\(p.sshUsername)"
+                loadRemote()
+            }
+        }
+    }
 
     private func navigateRemote(to path: String) {
         remoteDir = path

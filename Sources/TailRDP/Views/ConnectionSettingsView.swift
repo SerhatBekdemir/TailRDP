@@ -72,6 +72,8 @@ struct ConnectionSettingsView: View {
                     .font(.caption)
                     .disabled(password.isEmpty && !hasStored)
                 }
+                Text("Stored in macOS Keychain on this Mac only.")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
 
             Section {

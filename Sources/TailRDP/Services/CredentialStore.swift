@@ -1,45 +1,76 @@
 import Foundation
+import Security
 
-/// Stores per-host RDP passwords in a 0600 JSON file in Application Support.
-/// No Keychain → no system password popups. Username is part of HostProfile.
+/// Stores per-host RDP passwords in the macOS Keychain (service `app.tailrdp`).
+/// Username is part of HostProfile. One-time import from legacy `credentials.json`.
 final class CredentialStore {
     static let shared = CredentialStore()
+    static let service = "app.tailrdp"
 
-    private let url: URL
-    private var creds: [String: String]   // profile.id -> password
+    private let legacyURL: URL
 
     private init() {
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("TailRDP", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        url = base.appendingPathComponent("credentials.json")
-        creds = Self.load(url)
+        legacyURL = base.appendingPathComponent("credentials.json")
+        migrateFromLegacyJSONIfNeeded()
     }
 
-    private static func load(_ url: URL) -> [String: String] {
-        guard let data = try? Data(contentsOf: url),
-              let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
-        return dict
+    private func migrateFromLegacyJSONIfNeeded() {
+        guard FileManager.default.fileExists(atPath: legacyURL.path),
+              let data = try? Data(contentsOf: legacyURL),
+              let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return }
+        for (id, pwd) in dict where !pwd.isEmpty {
+            if password(for: id) == nil {
+                set(pwd, for: id)
+            }
+        }
+        try? FileManager.default.removeItem(at: legacyURL)
     }
 
-    private func persist() {
-        guard let data = try? JSONEncoder().encode(creds) else { return }
-        try? data.write(to: url, options: [.atomic])
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    func password(for id: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.service,
+            kSecAttrAccount as String: id,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
-    func password(for id: String) -> String? { creds[id] }
-
-    func hasPassword(for id: String) -> Bool { !(creds[id]?.isEmpty ?? true) }
+    func hasPassword(for id: String) -> Bool { !(password(for: id)?.isEmpty ?? true) }
 
     func set(_ password: String, for id: String) {
-        if password.isEmpty { creds[id] = nil } else { creds[id] = password }
-        persist()
+        if password.isEmpty {
+            remove(for: id)
+            return
+        }
+        let data = Data(password.utf8)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.service,
+            kSecAttrAccount as String: id
+        ]
+        let attrs: [String: Any] = [kSecValueData as String: data]
+        let updateStatus = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
+        if updateStatus == errSecItemNotFound {
+            var addQuery = query
+            addQuery[kSecValueData as String] = data
+            SecItemAdd(addQuery as CFDictionary, nil)
+        }
     }
 
     func remove(for id: String) {
-        creds[id] = nil
-        persist()
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.service,
+            kSecAttrAccount as String: id
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 }

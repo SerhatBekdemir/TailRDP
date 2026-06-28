@@ -93,6 +93,46 @@ final class ProfileStore: ObservableObject {
         save()
     }
 
+    /// Add a manually entered host; returns nil on success or an error message.
+    func addManualHost(
+        displayName: String,
+        address: String,
+        os: String = "linux",
+        rdpPort: Int = 3389
+    ) -> String? {
+        let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAddr = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return "Display name is required." }
+        guard !trimmedAddr.isEmpty else { return "Address is required." }
+        let id = trimmedName.lowercased()
+        if profiles.contains(where: { $0.id == id }) {
+            return "A host named \"\(trimmedName)\" already exists."
+        }
+        let user = UserDefaults.standard.defaultUsername
+        let profile = HostProfile(
+            id: id,
+            hostName: trimmedName,
+            displayName: trimmedName,
+            address: trimmedAddr,
+            os: os,
+            online: false,
+            rdpUsername: user,
+            sshUsername: user,
+            rdpPort: rdpPort,
+            settings: .default,
+            lastRemoteDir: ""
+        )
+        profiles.append(profile)
+        save()
+        return nil
+    }
+
+    var visibleProfiles: [HostProfile] {
+        let showOffline = UserDefaults.standard.bool(forKey: AppSettingsKey.showOffline)
+        if showOffline { return profiles }
+        return profiles.filter(\.online)
+    }
+
     /// Update online/address/os for known hosts; create defaults for new RDP
     /// candidates; mark vanished hosts offline.
     func merge(peers: [TailscalePeer]) {

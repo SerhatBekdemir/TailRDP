@@ -1,51 +1,62 @@
 # TailRDP
 
-Native macOS (SwiftUI) RDP client for a Tailscale network. Discover a tailnet
-machine, tune its connection settings, connect, and transfer files — all from
-one app. A thin, reliable wrapper around FreeRDP + SSH/SCP.
+Native macOS (SwiftUI) RDP client for a Tailscale network. Discover tailnet
+machines, tune connection settings, connect, and transfer files — a thin wrapper
+around FreeRDP + SSH/SCP.
 
-## Features
+## Quick start (users)
 
-- **Discovery** — lists tailnet machines from `tailscale status --json` with live
-  online indicators.
-- **Per-host settings** — resolution (fixed or dynamic), GFX codec
-  (AVC444/AVC420/RFX), color depth, network profile, clipboard, audio,
-  auto-reconnect, and a ⌘→Ctrl key remap (so ⌘C/⌘V work over RDP).
-- **One-click connect** — launches `sdl-freerdp` with the tuned arguments.
-- **File transfer** — dual-pane SFTP browser (push/pull, drag-and-drop from
-  Finder) over your existing SSH keys.
-- **Secure credentials** — passwords live in the macOS Keychain; passed to
-  FreeRDP via `/p:` at launch (Process uses `execve`, so nothing hits the shell
-  history; FreeRDP scrubs it from its own process title).
+**Prerequisites** (install separately):
 
-## Build
+- macOS 15+ on Apple Silicon (arm64)
+- [Tailscale](https://tailscale.com/download) — signed in to your tailnet
+- FreeRDP — `brew install freerdp` (provides `sdl-freerdp`)
+- SSH keys (optional) — for file transfer and Linux session auto-recovery
+
+**First launch:**
+
+1. Build or open `TailRDP.app` (unsigned builds: right-click → **Open** the first time).
+2. Complete the setup wizard: verify Tailscale + FreeRDP, set your default username, refresh the tailnet.
+3. Select a machine in the sidebar, open **Connection**, save the RDP password (stored in Keychain on this Mac).
+4. Click **Connect**.
+
+All tailnet peers appear in the sidebar (Linux, Windows, macOS, Android). Only
+hosts running an RDP server can be connected to — see [USER_GUIDE.md](USER_GUIDE.md).
+
+Passwords are stored in the macOS Keychain (`app.tailrdp`) and passed to FreeRDP
+via stdin (`/from-stdin:force`), never on the command line.
+
+## Build (developers)
 
 ```sh
-./build.sh            # swift build → assemble TailRDP.app → ad-hoc sign → install to /Applications
+./build.sh              # arm64 release → TailRDP.app + dist/TailRDP.app
+INSTALL=1 ./build.sh    # also copy to /Applications
+swift test              # unit tests
+swift run TailRDP --verify-session   # session logic smoke test
 ```
 
-Requires the Swift toolchain, plus `freerdp` and `tailscale` installed
-(`brew install freerdp`). macOS 14+.
+Requires Swift toolchain, macOS 15 SDK.
 
 ## Architecture
 
 ```
 Sources/TailRDP/
-  Models/    RDPSettings, TailscalePeer, HostProfile
-  Services/  ProcessRunner, KeychainService, TailscaleService,
-             RDPLauncher, SFTPService, ProfileStore, AppError
-  Views/     ContentView, PeerSidebar, HostDetailView,
-             ConnectionSettingsView, FileTransferView
+  Models/    AppSettings, HostProfile, RDPSettings, SessionHealth, TailscalePeer
+  Services/  CredentialStore (Keychain), DependencyChecker, ProcessRunner,
+             ProfileStore, RDPLauncher, RemoteDisplayRecovery,
+             SessionCoordinator, SFTPService, TailscaleService
+  Views/     ContentView, FirstRunWizardView, PeerSidebar, HostDetailView,
+             ConnectionSettingsView, FileTransferView, StatusBannerView
+  Logic/     SessionEndClassifier
+Tests/TailRDPTests/
 ```
 
-- Profiles persist to `~/Library/Application Support/TailRDP/profiles.json`.
-- Passwords: Keychain service `com.aegis.rdp`, account = lowercased hostname.
+- Profiles: `~/Library/Application Support/TailRDP/profiles.json`
+- Passwords: Keychain service `app.tailrdp`, account = profile id
+- Bundle ID: `app.tailrdp`
 
-## Notes
+See [HANDOVER.md](HANDOVER.md) for phased implementation notes and deferred items.
 
-Two RDP server models seen on Linux + gnome-remote-desktop:
-- **Remote Login** (system daemon, NLA gateway) — fresh independent session;
-  best for headless machines. Requires a gateway credential
-  (`grdctl --system rdp set-credentials <user> <pass>`).
-- **Desktop Sharing** (user daemon) — mirrors the active session; only captures
-  a **Wayland** session (black screen on X11).
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).

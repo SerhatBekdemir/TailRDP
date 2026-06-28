@@ -26,6 +26,16 @@ enum SFTPService {
         ProcessRunner.run(ssh, commonOpts + [target(profile), script])
     }
 
+    /// Remote login home directory (e.g. /home/user). Blocking — use from a Task.
+    static func remoteHomeDirectory(_ profile: HostProfile) -> String? {
+        let res = runScript(profile, script: "echo \"__HOME__$(cd ~ && pwd)\"")
+        guard let line = res.stdout.split(separator: "\n").first(where: { $0.hasPrefix("__HOME__") }) else {
+            return nil
+        }
+        let path = String(line.dropFirst("__HOME__".count))
+        return path.isEmpty ? nil : path
+    }
+
     /// Single-quote a path for safe interpolation into a remote shell command.
     private static func shq(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
