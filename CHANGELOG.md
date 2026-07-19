@@ -10,6 +10,10 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- RDP server certificate pinning via `/cert:tofu` — pinned on first connect, FreeRDP prompt on change (was `/cert:ignore`)
+- `TAILRDP_DATA_DIR` env override for profiles/credentials location (sandboxed QA runs; skips Keychain migration)
+- `--qa-integration <match>` live tailnet smoke runner
+- Duplicate manual-host display names rejected (case-insensitive)
 - GitHub Actions CI (build, test, `--verify-session`)
 - OSLog subsystem `app.tailrdp` with categories: tailscale, rdp, ssh, session
 - Bundled remote scripts with SHA256 pinning (`RemoteScriptLoader`)
@@ -25,14 +29,24 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
-- Keychain items use `kSecAttrAccessibleWhenUnlocked`
+- Sidebar shows only desktop RDP candidates (linux/windows/macos/other); non-candidates dropped on load/merge
+- Launch-command preview and host header now reflect actual launch settings under safe fallback (`HostProfile.connectSettings`)
+- Profile saves debounced; remote scripts and dependency probes cached; session-end SSH and disk writes deduped
+- Setup wizard cannot be dismissed before Finish
+- Passwords stored in `credentials.json` (mode 0600); Keychain used only for one-time import of legacy items
 - SSH-unknown banner: “Session ended — couldn't verify remote state”
 - Remote scripts extracted from inline strings to `RemoteScripts/`
+
+### Fixed
+
+- SIGPIPE crash when writing stdin to a fast-exiting child process
+- `ProcessRunner` pipe deadlock (stdout/stderr now drained concurrently)
 
 ### Security
 
 - Documented threat model in SECURITY.md
-- Passwords remain stdin-only; never in argv or export
+- Passwords passed to FreeRDP via `/p:` argv at launch; redacted in logs and command preview. `/from-stdin` evaluated and rejected (FreeRDP needs a tty) — see SECURITY.md
+- Server certificates pinned trust-on-first-use (`/cert:tofu`)
 
 ---
 

@@ -77,10 +77,10 @@ If FreeRDP or Tailscale is missing, a red banner appears at the top of the main 
 
 ### Sidebar
 
-- Lists tailnet peers (Linux, Windows, macOS, Android). Only hosts **with an RDP server** can actually be connected to.
+- Lists desktop tailnet peers (Linux, Windows, macOS). Phones and other non-RDP peers are filtered out. Only hosts **with an RDP server** can actually be connected to.
 - **Green dot** — online on Tailscale.
 - **Offline hosts** — hidden by default; enable in Settings.
-- **Toolbar +** — add a manual host (name, address, OS, port).
+- **Toolbar +** — add a manual host (name, address, OS, port). Display names must be unique (case-insensitive).
 - **Right-click** — delete host.
 - Icons indicate active session, paused session, or error state.
 
@@ -252,6 +252,7 @@ Passwords are **bound to this Mac and bundle ID**. They do not travel with profi
 | File transfer fails | Test `ssh user@host` without password prompt |
 | “Couldn't verify remote state” | Set up SSH keys; or connect anyway with Resume if you know session is up |
 | Stuck on “Resuming…” | Linux socket delay; if persistent, Disconnect remote session |
+| Certificate-changed prompt in RDP window | Server cert differs from the pinned one; accept only if you expect it (reinstall, cert rotation) |
 
 ### Debug logging
 
@@ -264,7 +265,7 @@ Open **Console.app**, filter subsystem **`app.tailrdp`**. Categories: `tailscale
 - **macOS 15+, arm64 only** in current build script.
 - **Unsigned / not notarized** — manual trust on first launch.
 - **Windows paused disconnect** — Disconnect clears local state; remote session may keep running (no WinRM).
-- **`/cert:ignore`** — RDP server certificates are not verified (typical for tailnet/home use).
+- **Trust-on-first-use certificates** — the RDP server certificate is pinned on the first connect (`/cert:tofu`); a changed certificate later shows a FreeRDP prompt. The very first connection to a host is unauthenticated. See [SECURITY.md](SECURITY.md).
 - **No menu bar agent** — standard windowed app only.
 - **No live connection quality metrics** — network profile is static, not measured from session.
 

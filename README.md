@@ -56,6 +56,7 @@ Passwords are saved in `~/Library/Application Support/TailRDP/credentials.json` 
 - **Session semantics** — pause vs logout vs crash; sticky and flash banners
 - **Linux GNOME recovery** — SSH scripts for stuck Wayland sessions, adaptive resume delay
 - **File transfer** — SFTP browser with remote `$HOME` detection
+- **Cert pinning** — trust-on-first-use (`/cert:tofu`); prompt on server cert change
 - **Profile export/import** — settings JSON (passwords re-entered after import)
 - **Structured logging** — OSLog subsystem `app.tailrdp` (Console.app)
 

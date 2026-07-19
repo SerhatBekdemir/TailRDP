@@ -42,7 +42,7 @@ flowchart TB
 |-----------|------|
 | `TailscaleService` | `tailscale status --json` → peers; `@MainActor`, refresh in `Task.detached` |
 | `ProfileStore` | `profiles.json`, merge discovery, flash/sticky banners, export/import |
-| `RDPLauncher` | Build FreeRDP argv, stdin password, track process, generation counter |
+| `RDPLauncher` | Build FreeRDP argv (`/p:` password, `/cert:tofu`), track process, generation counter |
 | `SessionCoordinator` | Connect orchestration, session end handling, adaptive Linux delay |
 | `SessionEndClassifier` | Pure classify: pause / logout / crash from exit code + stderr |
 | `RemoteDisplayRecovery` | SSH recovery presets, tri-state remote session |
@@ -290,7 +290,7 @@ Not implemented; documented for planning:
 | macOS 14 support | Package requires macOS 15 |
 | Menu bar status item | Always-on session indicator |
 | Live connection quality | Parse FreeRDP stderr / metrics |
-| Per-profile TLS verify | `/cert:ignore` is global today |
+| Per-host pin management UI | `/cert:tofu` pins globally in FreeRDP's known-hosts store; no in-app reset |
 | Encrypted profile backup | Export is plaintext JSON |
 | SwiftLint in CI | Not added |
 | Mock ProcessRunner integration tests | Unit tests cover pure logic only |

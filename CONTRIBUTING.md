@@ -74,7 +74,8 @@ Coverage includes:
 - `ProfileStore.merge` — discovery merge, offline marking
 - `RemoteDisplayRecovery.chooseRecovery` — preset matrix
 - `RemoteScriptLoader` — SHA256 pin consistency
-- `RDPLauncher.buildArguments` — Linux skips auto-reconnect, stdin flag
+- `RDPLauncher.buildArguments` — Linux skips auto-reconnect, `/p:` password, `/cert:tofu`
+- `ProcessRunner` — pipe-deadlock and stdin (SIGPIPE) regressions
 - `ProfileExport` — export/import round-trip
 
 ### Session smoke test (no XCTest)
@@ -84,6 +85,10 @@ swift run TailRDP --verify-session
 ```
 
 Runs built-in checks in `SessionEndClassifier.runBuiltInChecks()`. Used in `build.sh` and CI. Exit code 0 = pass.
+
+### Sandboxed GUI runs
+
+Set `TAILRDP_DATA_DIR=/path/to/dir` to point profiles and credentials at a scratch directory instead of Application Support (macOS ignores `$HOME` for GUI apps). Keychain migration is skipped under the override.
 
 ### Manual testing checklist
 
