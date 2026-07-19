@@ -184,7 +184,10 @@ final class RDPLauncherArgumentTests: XCTestCase {
         )
         let args = launcher.buildArguments(for: profile, password: "secret")
         XCTAssertTrue(args.contains("/p:secret"))
+        // /from-stdin rejected: FreeRDP reads passphrases via tty ioctls — unusable from a GUI app.
         XCTAssertFalse(args.contains("/from-stdin"))
+        XCTAssertTrue(args.contains("/cert:tofu"))
+        XCTAssertFalse(args.contains("/cert:ignore"))
     }
 
     @MainActor

@@ -49,7 +49,8 @@ final class RDPLauncher: ObservableObject {
         if let password, !password.isEmpty { a.append("/p:\(password)") }
         a += [
             "/sec:nla",
-            "/cert:ignore",
+            // tofu: pin server cert on first connect; changed cert → SDL prompt.
+            "/cert:tofu",
             "/network:\(s.network.flag)",
             "/gfx:\(s.codec.flag)",
             "/bpp:\(s.bpp)"

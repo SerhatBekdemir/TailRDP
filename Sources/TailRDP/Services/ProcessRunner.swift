@@ -49,8 +49,17 @@ enum ProcessRunner {
             try? inPipe.fileHandleForWriting.close()
         }
 
-        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        // Drain both pipes concurrently — sequential reads deadlock if the
+        // child fills the stderr pipe buffer while stdout is still open.
+        var outData = Data()
+        let outDone = DispatchSemaphore(value: 0)
+        let outHandle = outPipe.fileHandleForReading
+        DispatchQueue.global(qos: .utility).async {
+            outData = outHandle.readDataToEndOfFile()
+            outDone.signal()
+        }
         let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        outDone.wait()
         proc.waitUntilExit()
 
         return ProcessResult(

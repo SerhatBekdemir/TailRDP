@@ -10,7 +10,7 @@ TailRDP security model for a **personal / small-team tailnet RDP client**. This 
 |-------|------------|
 | RDP passwords | `~/Library/Application Support/TailRDP/credentials.json` (mode 0600); passed via `/p:` argv at launch |
 | Usernames | Plain JSON in Application Support |
-| RDP traffic | Tailscale wire + optional NLA; **server cert not verified** (`/cert:ignore`) |
+| RDP traffic | Tailscale wire + NLA; server cert pinned on first use (`/cert:tofu`) |
 | SSH recovery | Your SSH keys; `BatchMode=yes`, `StrictHostKeyChecking=accept-new` |
 | Remote scripts | Bundled, SHA256-pinned; run as SSH user on remote host |
 
@@ -29,7 +29,9 @@ TailRDP does **not** use the macOS Keychain for RDP passwords. This avoids the s
 
 ### FreeRDP password delivery
 
-Passwords are passed to FreeRDP as `/p:password` in the process argv at launch (briefly visible in process listings). `previewCommand()` shows `••••••` instead of the secret. OSLog argv output is redacted via `AppLog.redactedArgv`.
+Passwords are passed to FreeRDP as `/p:password` in the process argv at launch (visible in process listings **for the same user and root only** — macOS restricts other users' argv). `previewCommand()` shows `••••••` instead of the secret. OSLog argv output is redacted via `AppLog.redactedArgv`.
+
+`/from-stdin` was evaluated as an alternative and rejected: FreeRDP 3.27.1 reads the passphrase via terminal ioctls (`tcgetattr`), which fail without a tty ("Inappropriate ioctl for device") — a GUI app has none, and piping stdin does not work. Revisit if FreeRDP gains pipe-friendly credential input.
 
 **In memory:** passwords exist briefly as Swift `String` during launch.
 
@@ -51,9 +53,9 @@ Discovery uses local Tailscale CLI (`tailscale status --json`). Traffic to peers
 
 ### TLS / certificates
 
-FreeRDP is invoked with **`/cert:ignore`**. RDP server certificates are **not** validated. This is typical for home lab / tailnet hosts with self-signed or rotating certs but is a deliberate trust tradeoff.
+FreeRDP is invoked with **`/cert:tofu`** (trust on first use). The server certificate is pinned on the first connect; a changed certificate later triggers an SDL prompt instead of connecting silently.
 
-**Risk:** susceptible to MITM on the path from Mac to peer if tailnet or host is compromised.
+**Risk:** the first connection to a host is unauthenticated (a MITM present at first contact would be pinned). Hosts that rotate self-signed certs will re-prompt after each rotation.
 
 ### Authentication
 
