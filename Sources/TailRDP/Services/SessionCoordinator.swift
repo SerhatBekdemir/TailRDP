@@ -16,7 +16,7 @@ enum SessionCoordinator {
         }
 
         var statusParts: [String] = []
-        let useFallback = base.health.usingSafeFallback || base.health.consecutiveFailures >= 2
+        let useFallback = base.usesSafeFallback
 
         let isLinuxResume = base.os == "linux"
             && (resumingPaused || base.health.lastEndKind == .paused || base.stickyBanner?.style == .paused)
@@ -39,7 +39,7 @@ enum SessionCoordinator {
             }
         }
 
-        let launchProfile = profileForLaunch(base)
+        let launchProfile = base.profileForConnect()
         if isLinuxResume {
             statusParts.append("Resuming paused session")
         } else if useFallback {
@@ -338,16 +338,6 @@ enum SessionCoordinator {
         store.update(id: profileID) { p in
             p.lastWorking = LastWorkingSnapshot(settings: used, savedAt: Date())
         }
-    }
-
-    private static func profileForLaunch(_ profile: HostProfile) -> HostProfile {
-        var p = profile
-        if profile.health.usingSafeFallback || profile.health.consecutiveFailures >= 2 {
-            p.settings = .safeFallback
-        } else if let last = profile.lastWorking {
-            p.settings = last.settings
-        }
-        return p
     }
 
     private static func healBeforeConnect(profile: HostProfile) async -> String? {

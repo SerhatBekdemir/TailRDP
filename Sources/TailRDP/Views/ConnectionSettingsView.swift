@@ -43,7 +43,7 @@ struct ConnectionSettingsView: View {
             }
 
             Section {
-                if profile.health.usingSafeFallback || profile.health.consecutiveFailures >= 2 {
+                if profile.usesSafeFallback {
                     LabeledContent("Used when you Connect") {
                         Text(RDPSettings.safeFallback.connectSummary).foregroundStyle(.orange)
                     }

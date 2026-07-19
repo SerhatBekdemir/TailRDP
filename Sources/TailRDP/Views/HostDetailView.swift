@@ -113,14 +113,14 @@ struct HostDetailView: View {
                 }
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                if let last = profile.lastWorking {
-                    Text("Last good: \(last.settings.connectSummary)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                } else if profile.health.usingSafeFallback || profile.health.consecutiveFailures >= 2 {
+                if profile.usesSafeFallback {
                     Text("Using safe fallback until a session succeeds")
                         .font(.caption2)
                         .foregroundStyle(.orange)
+                } else if let last = profile.lastWorking {
+                    Text("Last good: \(last.settings.connectSummary)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             }
             Spacer()

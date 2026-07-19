@@ -249,6 +249,25 @@ final class HostProfileCredentialTests: XCTestCase {
         profile.ensurePausedBanner()
         XCTAssertEqual(profile.stickyBanner?.style, .paused)
     }
+
+    func testConnectSettingsPrecedence() {
+        var profile = HostProfile(
+            id: "box", hostName: "box", displayName: "box", address: "100.64.0.1", os: "linux",
+            online: true, rdpUsername: "a", sshUsername: "a", rdpPort: 3389,
+            settings: .default, lastRemoteDir: ""
+        )
+        XCTAssertEqual(profile.connectSettings, profile.settings)
+
+        var lastGood = RDPSettings.default
+        lastGood.width = 1600
+        profile.lastWorking = LastWorkingSnapshot(settings: lastGood, savedAt: Date())
+        XCTAssertEqual(profile.connectSettings, lastGood)
+
+        profile.health.consecutiveFailures = 2
+        XCTAssertTrue(profile.usesSafeFallback)
+        XCTAssertEqual(profile.connectSettings, .safeFallback)
+        XCTAssertEqual(profile.profileForConnect().settings, .safeFallback)
+    }
 }
 
 final class SessionHealthTests: XCTestCase {

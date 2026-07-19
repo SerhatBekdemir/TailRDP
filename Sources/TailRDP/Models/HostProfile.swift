@@ -23,9 +23,15 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
         set { sessionHealth = newValue }
     }
 
-    /// Settings used for the next Connect — last known good, or current form values.
+    /// After repeated failures, Connect ignores saved settings and uses `RDPSettings.safeFallback`.
+    var usesSafeFallback: Bool {
+        health.usingSafeFallback || health.consecutiveFailures >= 2
+    }
+
+    /// Settings used for the next Connect — safe fallback, last known good, or current form values.
     var connectSettings: RDPSettings {
-        lastWorking?.settings ?? settings
+        if usesSafeFallback { return .safeFallback }
+        return lastWorking?.settings ?? settings
     }
 
     func profileForConnect() -> HostProfile {
