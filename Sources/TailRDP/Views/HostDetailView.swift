@@ -48,9 +48,7 @@ struct HostDetailView: View {
                     try? await Task.sleep(for: .seconds(SessionHealth.establishedSessionThreshold))
                     guard !Task.isCancelled, launcher.isActive(profile.id) else { return }
                     store.clearPausedSession(profileID: profile.id)
-                    if let updated = store.profile(id: profile.id) {
-                        profile = updated
-                    }
+                    syncProfileFromStore()
                 }
             }
         }
@@ -216,15 +214,20 @@ struct HostDetailView: View {
                 profileID: profile.id,
                 store: store
             )
-            if let updated = store.profile(id: profile.id) {
-                profile = updated
-            }
+            syncProfileFromStore()
             if result.isError {
                 store.setFlashBanner(
                     profileID: profile.id,
                     banner: HostFlashBanner(text: result.message, style: .error)
                 )
             }
+        }
+    }
+
+    /// Pull store-side mutations (banners, health) back into the bound profile.
+    private func syncProfileFromStore() {
+        if let updated = store.profile(id: profile.id) {
+            profile = updated
         }
     }
 
@@ -272,9 +275,7 @@ struct HostDetailView: View {
         }
         showCredentialsSheet = false
         credentialsMessage = nil
-        if let updated = store.profile(id: profile.id) {
-            profile = updated
-        }
+        syncProfileFromStore()
         if connectAfterCredentials {
             proceedToConnect()
         }
@@ -329,9 +330,7 @@ struct HostDetailView: View {
                 launcher: launcher,
                 resumingPaused: resuming
             )
-            if let updated = store.profile(id: profile.id) {
-                profile = updated
-            }
+            syncProfileFromStore()
             if result.isError {
                 if result.message.contains("No saved sign-in") {
                     presentCredentials(message: nil, connectAfter: true)
