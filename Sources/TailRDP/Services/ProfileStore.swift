@@ -20,9 +20,7 @@ final class ProfileStore: ObservableObject {
 
     init() {
         debounceSaves = true
-        let base = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("TailRDP", isDirectory: true)
+        let base = AppDataDir.base
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         url = base.appendingPathComponent("profiles.json")
         load()
@@ -187,7 +185,11 @@ final class ProfileStore: ObservableObject {
         guard !trimmedName.isEmpty else { return "Display name is required." }
         guard !trimmedAddr.isEmpty else { return "Address is required." }
         let id = trimmedName.lowercased()
-        if profiles.contains(where: { $0.id == id }) {
+        // Discovered hosts have hostname-based ids, so id equality alone misses
+        // display-name collisions (QA-010).
+        if profiles.contains(where: {
+            $0.id == id || $0.displayName.caseInsensitiveCompare(trimmedName) == .orderedSame
+        }) {
             return "A host named \"\(trimmedName)\" already exists."
         }
         let user = UserDefaults.standard.defaultUsername

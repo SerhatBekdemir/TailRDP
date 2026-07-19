@@ -8,6 +8,13 @@ Allowed host OS: `linux`, `windows`, `macOS`, `other` — phones/TV OS values ar
 
 Run automated checks: `swift test && swift run TailRDP --verify-session`
 
+Sandboxed production-scale GUI run (does not touch real profiles — macOS ignores `$HOME`, use the env override):
+
+```sh
+cp Tests/TailRDPTests/Fixtures/sanitized-production-profiles.json /tmp/tailrdp-qa/profiles.json
+TAILRDP_DATA_DIR=/tmp/tailrdp-qa dist/TailRDP.app/Contents/MacOS/TailRDP -hasCompletedFirstRun YES -showOffline YES
+```
+
 ---
 
 ## 1. First-run wizard (`FirstRunWizardView`)
@@ -74,6 +81,8 @@ Run automated checks: `swift test && swift run TailRDP --verify-session`
 | Display mode | Fixed / Resizable / Fullscreen; mutual exclusion | Fullscreen clears multimon; legacy conflicting flags normalized on load |
 | Resolution | Presets + **custom label** when non-preset | 1366×768 etc. show actual size |
 | Codec / network | AVC420 default; help text | Legacy `autoDiagnoseOnFailure` → `smartReconnect` |
+| Safe fallback | `usesSafeFallback` (≥2 failures) wins over last-good in header text, settings summary, and launch argv | Header shows orange "Using safe fallback" even when last-good exists |
+| Server cert | `/cert:tofu` — pinned on first connect; changed cert → SDL prompt | Cert change mid-automation blocks headless runs (expected) |
 | Behavior toggles | Clipboard, audio, ⌘→Ctrl, auto-reconnect, smart reconnect | Linux skips auto-reconnect in argv |
 | Advanced (Linux) | Check remote / full reset via SSH | Disabled when no address |
 | Launch command | Redacted password in preview | Uses connect settings (last-good when set) |
@@ -130,12 +139,28 @@ Run automated checks: `swift test && swift run TailRDP --verify-session`
 | QA-004 | — | Tests | No production-scale fixture | **Fixed** — 40-host fixture + load tests |
 | QA-005 | — | CLI | No live integration runner | **Fixed** — `--qa-integration` |
 | QA-006 | Info | Pause | Linux SSH inactive after window close → loggedOut not paused | **Expected** — tri-state SSH verify |
+| QA-007 | — | QA tooling | Sandboxed GUI run impossible: macOS resolves home via passwd, `$HOME` override ignored → QA launch read real profiles | **Fixed** — `TAILRDP_DATA_DIR` env override (`AppDataDir`), Keychain migration skipped under override; tests |
+| QA-008 | Medium | ProcessRunner | stdin >64KB to a child that exits without reading → SIGPIPE kills the app (latent — no production stdin caller today) | **Fixed** — SIG_IGN + throwing `write(contentsOf:)`; regression test crashed with signal 13 pre-fix |
+| QA-009 | — | Tests | Pipe-deadlock fix (91eb661) had no regression test | **Fixed** — concurrent 200KB stdout+stderr drain test |
+| QA-010 | Medium | Add Host | Duplicate display name accepted when existing profile has hostname-based id (discovered hosts) → two identical sidebar rows | **Fixed** — case-insensitive displayName check in `addManualHost`; verified in live UI (inline error) |
 
 ---
 
 ## Live run 2026-06-28 (XPS)
 
 All `--qa-integration xps` checks passed including RDP connect/disconnect and pause window-close (coordinator correctly returned loggedOut when remote session inactive).
+
+## Sandboxed production-scale run 2026-07-20
+
+40-host fixture via `TAILRDP_DATA_DIR`; GUI rendered full sidebar, offline header (wifi-slash + Connect enabled), live Tailscale merge added 3 real peers and correctly marked fixture hosts offline. Real profile store untouched. `swift test` 49/49, `--verify-session` exit 0.
+
+## Live run 2026-07-20 (XPS)
+
+`--qa-integration xps` full pass: classifier checks, Tailscale refresh/merge, SSH $HOME + SFTP listing (47 entries), remote inspect (tri-state inactive), export/import, RDP connect (last-good settings, `/cert:tofu` pinned silently), 6s session, disconnect → loggedOut, pause window-close cycle (remote inactive → loggedOut, expected per QA-006). Exit 0.
+
+## Interactive UI pass 2026-07-20 (Accessibility granted)
+
+Coordinate-driven System Events clicks on sandboxed instance: tab switch Connection↔Files (radio group), Files tab live dual-pane (local home + remote SSH `$HOME` listing), auto-selection of first online host, Add Host sheet (fields, OS picker, Cancel/Add), duplicate-name rejection (QA-010 fix verified — inline error), Settings window (detected CLI paths, tailnet status, offline toggle). Screenshots in `~/Development/genesis/browsepng/tailrdp-qa-*-2026-07-20.png`. Note: `entire contents` AX enumeration hangs on SwiftUI — use coordinate clicks.
 
 ---
 
@@ -144,7 +169,7 @@ All `--qa-integration xps` checks passed including RDP connect/disconnect and pa
 | Item | Reason |
 |------|--------|
 | Gatekeeper first launch | Manual Finder → Open on unsigned builds |
-| SwiftUI visual regression | No XCTest UI target; use `dist/TailRDP.app` smoke |
+| SwiftUI visual regression | No XCTest UI target; use sandboxed `TAILRDP_DATA_DIR` run + coordinate-click UI pass (needs Accessibility) |
 
 ### Live integration (automated)
 
@@ -160,7 +185,7 @@ Covers: Tailscale refresh, SSH/SFTP, remote inspect, export/import, RDP connect/
 
 - [x] `swift test` — all unit tests pass
 - [x] `swift run TailRDP --verify-session` — exit 0
-- [x] `swift run TailRDP --qa-integration xps` — live pass on XPS (2026-06-28)
+- [x] `swift run TailRDP --qa-integration xps` — live pass on XPS (2026-06-28, 2026-07-20)
 - [x] `./build.sh` — release + verify gate
 - [x] Production fixture loads without decode errors
 - [x] Documented bugs fixed with regression tests

@@ -510,6 +510,19 @@ final class ProfileStoreFixtureTests: XCTestCase {
         XCTAssertEqual(store.addManualHost(displayName: "Box", address: ""), "Address is required.")
         XCTAssertNil(store.addManualHost(displayName: "Box", address: "100.64.0.5"))
         XCTAssertEqual(store.addManualHost(displayName: "Box", address: "100.64.0.6"), "A host named \"Box\" already exists.")
+
+        // QA-010: discovered host with hostname id but same display name must also collide.
+        var discovered = HostProfile(
+            id: "host-01", hostName: "host-01", displayName: "Render Node", address: "100.64.0.7",
+            os: "linux", online: true, rdpUsername: "u", sshUsername: "u", rdpPort: 3389,
+            settings: .default, lastRemoteDir: ""
+        )
+        discovered.normalizeCredentials()
+        store.profiles.append(discovered)
+        XCTAssertEqual(
+            store.addManualHost(displayName: "render node", address: "100.64.0.8"),
+            "A host named \"render node\" already exists."
+        )
     }
 
     func testLoadDropsNonRDPCapableProfiles() throws {
@@ -562,5 +575,46 @@ final class RDPSettingsLegacyTests: XCTestCase {
         settings.height = 768
         XCTAssertEqual(settings.displayMode, .window)
         XCTAssertEqual(settings.connectSummary, "1366×768, AVC420, lan")
+    }
+}
+
+final class ProcessRunnerTests: XCTestCase {
+    /// Regression: sequential pipe reads deadlocked when a child filled the 64KB
+    /// stderr buffer while stdout was still open (commit 91eb661).
+    func testConcurrentDrainOfLargeStdoutAndStderr() {
+        let result = ProcessRunner.run(
+            "/bin/sh",
+            ["-c", "dd if=/dev/zero bs=1024 count=200 2>/dev/null | tr '\\0' 'o'; dd if=/dev/zero bs=1024 count=200 2>/dev/null | tr '\\0' 'e' 1>&2"]
+        )
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout.count, 200 * 1024)
+        XCTAssertEqual(result.stderr.count, 200 * 1024)
+    }
+
+    /// Regression: writing stdin to a child that exited without reading raised
+    /// an uncatchable NSException (EPIPE) with the legacy FileHandle.write API.
+    func testStdinToFastExitingChildDoesNotCrash() {
+        let big = String(repeating: "x", count: 1_000_000)
+        let result = ProcessRunner.run("/bin/sh", ["-c", "exit 7"], stdin: big)
+        XCTAssertEqual(result.exitCode, 7)
+    }
+
+    func testStdinDelivered() {
+        let result = ProcessRunner.run("/bin/cat", [], stdin: "hello")
+        XCTAssertTrue(result.ok)
+        XCTAssertEqual(result.stdout, "hello")
+    }
+}
+
+final class AppDataDirTests: XCTestCase {
+    func testOverrideHonored() {
+        setenv("TAILRDP_DATA_DIR", "/tmp/tailrdp-qa-data", 1)
+        defer { unsetenv("TAILRDP_DATA_DIR") }
+        XCTAssertEqual(AppDataDir.base.path, "/tmp/tailrdp-qa-data")
+    }
+
+    func testDefaultIsApplicationSupport() {
+        unsetenv("TAILRDP_DATA_DIR")
+        XCTAssertTrue(AppDataDir.base.path.hasSuffix("Application Support/TailRDP"))
     }
 }

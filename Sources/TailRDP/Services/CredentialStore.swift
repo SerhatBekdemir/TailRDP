@@ -23,10 +23,11 @@ final class CredentialStore {
     }
 
     private convenience init() {
-        let base = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("TailRDP", isDirectory: true)
-        self.init(fileURL: base.appendingPathComponent("credentials.json"), migrateKeychain: true)
+        // Never run Keychain migration against a QA data-dir override.
+        self.init(
+            fileURL: AppDataDir.base.appendingPathComponent("credentials.json"),
+            migrateKeychain: AppDataDir.override == nil
+        )
     }
 
     /// Isolated store for unit tests — does not touch Application Support or Keychain.

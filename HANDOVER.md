@@ -134,6 +134,7 @@ When resuming Linux with `remoteSessionIDs.count > 1`, `HostDetailView` shows `R
 | Sticky banners | Persisted on `HostProfile.stickyBanner` |
 | Session health | `HostProfile.sessionHealth` (failures, last end kind, resume delay ms) |
 | App settings | `UserDefaults` (`AppSettingsKey`) |
+| QA data override | `TAILRDP_DATA_DIR` env → profiles + credentials read/written there instead of Application Support (macOS ignores `$HOME`); Keychain migration skipped |
 
 ### Profile id convention
 

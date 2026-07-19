@@ -23,8 +23,14 @@ enum ProcessRunner {
         return env
     }
 
+    /// Without SIG_IGN, writing stdin to a child that exited before reading kills
+    /// the whole app with SIGPIPE. Ignored disposition is not inherited by children
+    /// (posix_spawn resets to default). With it ignored, the write throws EPIPE instead.
+    private static let ignoreSIGPIPE: Void = { signal(SIGPIPE, SIG_IGN) }()
+
     @discardableResult
     static func run(_ launchPath: String, _ args: [String], stdin: String? = nil) -> ProcessResult {
+        _ = ignoreSIGPIPE
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: launchPath)
         proc.arguments = args
@@ -45,7 +51,8 @@ enum ProcessRunner {
         }
 
         if let stdin, let inPipe {
-            inPipe.fileHandleForWriting.write(Data(stdin.utf8))
+            // Throwing API: EPIPE from a fast-exiting child must not raise NSException.
+            try? inPipe.fileHandleForWriting.write(contentsOf: Data(stdin.utf8))
             try? inPipe.fileHandleForWriting.close()
         }
 
