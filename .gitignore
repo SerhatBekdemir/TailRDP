@@ -30,3 +30,6 @@ Icon?
 
 # Logs & debug
 *.log
+# Added by code-review-graph
+.code-review-graph/
+.claude/scheduled_tasks.lock

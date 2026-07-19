@@ -77,7 +77,7 @@ struct ConnectionSettingsView: View {
                         Text(mode.label).tag(mode)
                     }
                 }
-                Text(profile.settings.displayMode.helpText(macOS: isMacOS))
+                Text(profile.settings.displayMode.helpText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
 
@@ -168,14 +168,6 @@ struct ConnectionSettingsView: View {
             refreshStoredState()
         }
         .onChange(of: profile.id) { _, _ in refreshStoredState() }
-    }
-
-    private var isMacOS: Bool {
-        #if os(macOS)
-        return true
-        #else
-        return false
-        #endif
     }
 
     private func refreshStoredState() {

@@ -73,12 +73,8 @@ final class RDPLauncher: ObservableObject {
     /// macOS: normal window at chosen resolution; use the window's green button for native fullscreen.
     private func appendFullscreenArguments(to args: inout [String], settings: RDPSettings) {
         args.append("/size:\(settings.width)x\(settings.height)")
-        #if os(macOS)
         args.append("+dynamic-resolution")
         args.append("/floatbar:sticky:on,default:visible,show:fullscreen")
-        #else
-        args.append("/f")
-        #endif
     }
 
     func previewCommand(for profile: HostProfile) -> String {

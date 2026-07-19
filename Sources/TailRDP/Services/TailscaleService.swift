@@ -11,16 +11,9 @@ final class TailscaleService: ObservableObject {
 
     private var refreshGeneration: UInt64 = 0
 
-    private static let binaryCandidates = [
-        "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-        "/opt/homebrew/bin/tailscale",
-        "/usr/local/bin/tailscale",
-        "/usr/bin/tailscale"
-    ]
-
     /// Auto-detected path (first existing candidate), for display in Settings.
     var detectedPath: String? {
-        Self.binaryCandidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+        DependencyChecker.tailscaleCandidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     /// Effective path: a non-empty, executable override from Settings wins;

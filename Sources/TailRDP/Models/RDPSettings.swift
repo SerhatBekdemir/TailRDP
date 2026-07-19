@@ -49,17 +49,14 @@ enum RDPDisplayMode: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    func helpText(macOS: Bool) -> String {
+    var helpText: String {
         switch self {
         case .window:
             return "Opens at the resolution below. Good when you want a specific size or 16:9 ratio."
         case .resizable:
             return "Drag the window edges to resize — the remote desktop follows."
         case .fullscreen:
-            if macOS {
-                return "Opens at your chosen resolution. Click the green fullscreen button on the RDP window when ready. Exit with Ctrl+⌘+F."
-            }
-            return "Starts in fullscreen."
+            return "Opens at your chosen resolution. Click the green fullscreen button on the RDP window when ready. Exit with Ctrl+⌘+F."
         }
     }
 }

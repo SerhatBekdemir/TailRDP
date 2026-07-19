@@ -171,15 +171,6 @@ final class ProfileStore: ObservableObject {
         }
     }
 
-    func upsert(_ profile: HostProfile) {
-        if let i = profiles.firstIndex(where: { $0.id == profile.id }) {
-            profiles[i] = profile
-        } else {
-            profiles.append(profile)
-        }
-        save()
-    }
-
     func remove(id: String) {
         profiles.removeAll { $0.id == id }
         CredentialStore.shared.remove(for: id)

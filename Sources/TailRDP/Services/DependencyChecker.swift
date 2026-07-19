@@ -2,8 +2,7 @@ import Foundation
 
 /// Detects external CLI dependencies TailRDP relies on.
 enum DependencyChecker {
-    private static var cachedTailscale: (found: Bool, path: String?)?
-    private static var cachedFreerdp: (found: Bool, path: String?)?
+    private static var cache: [String: (found: Bool, path: String?)] = [:]
     private static let lock = NSLock()
 
     static let tailscaleCandidates = [
@@ -21,55 +20,39 @@ enum DependencyChecker {
     ]
 
     static func tailscale(override: String? = nil) -> (found: Bool, path: String?) {
-        if let override, !override.isEmpty,
-           FileManager.default.isExecutableFile(atPath: override) {
-            return (true, override)
-        }
-        lock.lock()
-        if let cached = cachedTailscale {
-            lock.unlock()
-            return cached
-        }
-        lock.unlock()
-        let result: (found: Bool, path: String?)
-        if let path = tailscaleCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
-            result = (true, path)
-        } else {
-            result = (false, nil)
-        }
-        lock.lock()
-        cachedTailscale = result
-        lock.unlock()
-        return result
+        detect("tailscale", override: override, candidates: tailscaleCandidates)
     }
 
     static func freerdp(override: String? = nil) -> (found: Bool, path: String?) {
+        detect("freerdp", override: override, candidates: freerdpCandidates)
+    }
+
+    private static func detect(
+        _ key: String,
+        override: String?,
+        candidates: [String]
+    ) -> (found: Bool, path: String?) {
         if let override, !override.isEmpty,
            FileManager.default.isExecutableFile(atPath: override) {
             return (true, override)
         }
         lock.lock()
-        if let cached = cachedFreerdp {
+        if let cached = cache[key] {
             lock.unlock()
             return cached
         }
         lock.unlock()
-        let result: (found: Bool, path: String?)
-        if let path = freerdpCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
-            result = (true, path)
-        } else {
-            result = (false, nil)
-        }
+        let path = candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+        let result = (found: path != nil, path: path)
         lock.lock()
-        cachedFreerdp = result
+        cache[key] = result
         lock.unlock()
         return result
     }
 
     static func invalidateCache() {
         lock.lock()
-        cachedTailscale = nil
-        cachedFreerdp = nil
+        cache.removeAll()
         lock.unlock()
     }
 
