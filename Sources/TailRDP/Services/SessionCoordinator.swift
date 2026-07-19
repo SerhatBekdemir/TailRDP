@@ -18,7 +18,7 @@ enum SessionCoordinator {
         var statusParts: [String] = []
         let useFallback = base.usesSafeFallback
 
-        let isLinuxResume = base.os == "linux"
+        let isLinuxResume = base.isLinux
             && (resumingPaused || base.health.lastEndKind == .paused || base.stickyBanner?.style == .paused)
 
         // Gnome Remote Desktop can hang if the client reconnects before the prior
@@ -30,7 +30,7 @@ enum SessionCoordinator {
         }
 
         // Only heal before connect after a prior crash — never after pause or logout.
-        if base.os == "linux",
+        if base.isLinux,
            base.health.consecutiveFailures > 0,
            base.health.lastEndKind == .crashed,
            base.settings.smartReconnect {
@@ -52,19 +52,16 @@ enum SessionCoordinator {
 
         if let err = await launcher.launch(profile: launchProfile) {
             store.update(id: profileID) { p in
-                var h = p.health
-                h.consecutiveFailures += 1
-                h.lastFailureSummary = err
-                if !isLinuxResume {
-                    h.lastEndKind = .crashed
-                }
+                p.health.consecutiveFailures += 1
+                p.health.lastFailureSummary = err
                 if isLinuxResume {
-                    h.linuxResumeDelayMs = min(
+                    p.health.linuxResumeDelayMs = min(
                         SessionHealth.maxLinuxResumeDelayMs,
-                        h.linuxResumeDelayMs + SessionHealth.resumeDelayBackoffMs
+                        p.health.linuxResumeDelayMs + SessionHealth.resumeDelayBackoffMs
                     )
+                } else {
+                    p.health.lastEndKind = .crashed
                 }
-                p.sessionHealth = h
             }
             AppLog.session.error("Connect failed for \(profileID, privacy: .public): \(err, privacy: .public)")
             return (err, true)
@@ -72,12 +69,10 @@ enum SessionCoordinator {
 
         if isLinuxResume {
             store.update(id: profileID) { p in
-                var h = p.health
-                h.linuxResumeDelayMs = max(
+                p.health.linuxResumeDelayMs = max(
                     SessionHealth.minLinuxResumeDelayMs,
-                    h.linuxResumeDelayMs - SessionHealth.resumeDelayStepMs
+                    p.health.linuxResumeDelayMs - SessionHealth.resumeDelayStepMs
                 )
-                p.sessionHealth = h
             }
         }
 
@@ -101,9 +96,7 @@ enum SessionCoordinator {
         case .loggedOut:
             recordSuccessfulSettings(profileID: notice.profileID, used: used, duration: duration, store: store)
             store.update(id: notice.profileID) { p in
-                var h = SessionHealth()
-                h.lastEndKind = .loggedOut
-                p.sessionHealth = h
+                p.sessionHealth = SessionHealth(lastEndKind: .loggedOut)
             }
             return SessionEndOutcome(message: "Disconnected.", kind: .loggedOut)
 
@@ -120,17 +113,13 @@ enum SessionCoordinator {
             }
             if resolved.kind == .loggedOut {
                 store.update(id: notice.profileID) { p in
-                    var h = SessionHealth()
-                    h.lastEndKind = .loggedOut
-                    p.sessionHealth = h
+                    p.sessionHealth = SessionHealth(lastEndKind: .loggedOut)
                 }
                 return SessionEndOutcome(message: "Remote session ended.", kind: .loggedOut)
             }
             recordSuccessfulSettings(profileID: notice.profileID, used: used, duration: duration, store: store)
             store.update(id: notice.profileID) { p in
-                var h = SessionHealth()
-                h.lastEndKind = .paused
-                p.sessionHealth = h
+                p.sessionHealth = SessionHealth(lastEndKind: .paused)
             }
             let sshNote = resolved.sshUnknown
                 ? "SSH is unavailable. The remote session may still be running."
@@ -167,7 +156,7 @@ enum SessionCoordinator {
             return ("Host not found.", true)
         }
 
-        if profile.os == "linux" {
+        if profile.isLinux {
             let result = await Task.detached {
                 RemoteDisplayRecovery.terminateRemoteSessions(profile)
             }.value
@@ -177,9 +166,7 @@ enum SessionCoordinator {
             case .success(let detail):
                 store.clearPausedSession(profileID: profileID)
                 store.update(id: profileID, immediate: true) { p in
-                    var h = SessionHealth()
-                    h.lastEndKind = .loggedOut
-                    p.sessionHealth = h
+                    p.sessionHealth = SessionHealth(lastEndKind: .loggedOut)
                 }
                 store.setFlashBanner(
                     profileID: profileID,
@@ -193,9 +180,7 @@ enum SessionCoordinator {
         // Non-Linux: no SSH hook to log off a paused RDP session — clear local state only.
         store.clearPausedSession(profileID: profileID)
         store.update(id: profileID, immediate: true) { p in
-            var h = SessionHealth()
-            h.lastEndKind = .loggedOut
-            p.sessionHealth = h
+            p.sessionHealth = SessionHealth(lastEndKind: .loggedOut)
         }
         store.setFlashBanner(
             profileID: profileID,
@@ -251,10 +236,8 @@ enum SessionCoordinator {
 
         if isAuthenticationFailure(notice) {
             store.update(id: notice.profileID) { p in
-                var h = p.health
-                h.lastFailureSummary = notice.message
-                h.lastEndKind = .crashed
-                p.sessionHealth = h
+                p.health.lastFailureSummary = notice.message
+                p.health.lastEndKind = .crashed
             }
             return SessionEndOutcome(
                 message: "Sign-in failed. Update your username or password.",
@@ -280,7 +263,7 @@ enum SessionCoordinator {
         )
 
         var fixSummary: String?
-        if profile.settings.smartReconnect, profile.os == "linux", preset != .none {
+        if profile.settings.smartReconnect, profile.isLinux, preset != .none {
             let applied = await Task.detached {
                 RemoteDisplayRecovery.apply(preset, profile: profile)
             }.value
@@ -297,15 +280,13 @@ enum SessionCoordinator {
         }
 
         store.update(id: notice.profileID) { p in
-            var h = p.health
-            h.consecutiveFailures += 1
-            h.lastFailureSummary = notice.message
-            h.lastEndKind = .crashed
+            p.health.consecutiveFailures += 1
+            p.health.lastFailureSummary = notice.message
+            p.health.lastEndKind = .crashed
             if preset == .useSafeClientSettings {
-                h.usingSafeFallback = true
+                p.health.usingSafeFallback = true
                 p.lastWorking = nil
             }
-            p.sessionHealth = h
         }
 
         // Preserve last-good settings from sessions that ran long enough before crashing.

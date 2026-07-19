@@ -66,7 +66,7 @@ final class RDPLauncher: ObservableObject {
         if s.sound { a.append("/sound") }
         if s.mapCmdToCtrl { a.append("/kbd:remap:0x15b=0x1d,remap:0x15c=0x1d") }
         // Gnome Remote Desktop: auto-reconnect causes black-screen stalls after pause.
-        if s.autoReconnect, profile.os != "linux" { a.append("+auto-reconnect") }
+        if s.autoReconnect, !profile.isLinux { a.append("+auto-reconnect") }
         return a
     }
 

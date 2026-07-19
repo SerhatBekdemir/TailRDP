@@ -123,6 +123,10 @@ struct SessionHealth: Codable, Equatable, Sendable {
     /// Adaptive pause before Linux resume connect (ms). Learned from prior outcomes.
     var linuxResumeDelayMs: Int = SessionHealth.defaultLinuxResumeDelayMs
 
+    init(lastEndKind: SessionEndKind? = nil) {
+        self.lastEndKind = lastEndKind
+    }
+
     /// Seconds a session must run before pause state is cleared on reconnect.
     static let establishedSessionThreshold: TimeInterval = 45
 

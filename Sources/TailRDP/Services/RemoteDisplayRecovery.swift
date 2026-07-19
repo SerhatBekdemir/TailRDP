@@ -32,14 +32,14 @@ public enum RemoteSessionState: Equatable {
 
 public enum RemoteDisplayRecovery {
     static func inspect(_ profile: HostProfile) -> Result<RemoteSessionReport, AppError> {
-        guard profile.os == "linux" else {
+        guard profile.isLinux else {
             return .success(RemoteSessionReport(layoutSummary: "Not a Linux host", remoteSessionIDs: [], recentErrors: []))
         }
         return runReportScript(profile, sinceMinutes: nil)
     }
 
     static func discoverFailure(_ profile: HostProfile) -> Result<RemoteSessionReport, AppError> {
-        guard profile.os == "linux" else {
+        guard profile.isLinux else {
             return .success(RemoteSessionReport(layoutSummary: "", remoteSessionIDs: [], recentErrors: []))
         }
         return runReportScript(profile, sinceMinutes: 5)
@@ -90,7 +90,7 @@ public enum RemoteDisplayRecovery {
     }
 
     static func remoteSessionState(_ profile: HostProfile) -> RemoteSessionState {
-        guard profile.os == "linux" else { return .inactive }
+        guard profile.isLinux else { return .inactive }
         switch inspect(profile) {
         case .failure:
             return .unknown
@@ -113,7 +113,7 @@ public enum RemoteDisplayRecovery {
     }
 
     static func terminateRemoteSessions(_ profile: HostProfile, exceptSessionID: String? = nil) -> Result<String, AppError> {
-        guard profile.os == "linux" else { return .fail("Only applies to Linux hosts") }
+        guard profile.isLinux else { return .fail("Only applies to Linux hosts") }
         let script = RemoteScriptLoader.terminateSessionsScript(exceptSessionID: exceptSessionID)
         let res = SFTPService.runScript(profile, script: script)
         if !res.ok && !res.stdout.contains("__RECOVER__ok") {
@@ -125,7 +125,7 @@ public enum RemoteDisplayRecovery {
     }
 
     static func recover(_ profile: HostProfile) -> Result<String, AppError> {
-        guard profile.os == "linux" else { return .fail("Session recovery only applies to Linux hosts") }
+        guard profile.isLinux else { return .fail("Session recovery only applies to Linux hosts") }
         let res = SFTPService.runScript(profile, script: RemoteScriptLoader.recoverScript())
         if !res.ok && !res.stdout.contains("__RECOVER__ok") {
             let msg = res.stderr.trimmingCharacters(in: .whitespacesAndNewlines)

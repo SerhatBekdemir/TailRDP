@@ -291,7 +291,7 @@ struct HostDetailView: View {
         let resuming = profile.stickyBanner?.style == .paused
             || profile.health.lastEndKind == .paused
 
-        if resuming, profile.os == "linux" {
+        if resuming, profile.isLinux {
             pendingResuming = true
             isConnecting = true
             let p = profile

@@ -164,9 +164,7 @@ final class ProfileStore: ObservableObject {
         update(id: profileID) { p in
             p.stickyBanner = nil
             if p.health.lastEndKind == .paused {
-                var h = p.health
-                h.lastEndKind = nil
-                p.sessionHealth = h
+                p.health.lastEndKind = nil
             }
         }
     }

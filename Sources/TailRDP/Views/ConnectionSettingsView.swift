@@ -130,7 +130,7 @@ struct ConnectionSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if profile.os == "linux" {
+            if profile.isLinux {
                 Section {
                     DisclosureGroup("Advanced troubleshooting", isExpanded: $showAdvanced) {
                         if let advancedStatus {
