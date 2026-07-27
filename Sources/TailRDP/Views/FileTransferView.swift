@@ -66,7 +66,6 @@ struct FileTransferView: View {
                 ForEach(localEntries) { entry in
                     fileRow(name: entry.name, isDir: entry.isDirectory, size: entry.size)
                         .tag(entry.path)
-                        .contentShape(Rectangle())
                         .onTapGesture(count: 2) {
                             if entry.isDirectory { navigateLocal(to: entry.path) }
                         }
@@ -100,7 +99,6 @@ struct FileTransferView: View {
                     ForEach(remoteEntries) { entry in
                         fileRow(name: entry.name, isDir: entry.isDirectory, size: entry.size)
                             .tag(entry.name)
-                            .contentShape(Rectangle())
                             .onTapGesture(count: 2) {
                                 if entry.isDirectory { navigateRemote(to: joinPath(remoteDir, entry.name)) }
                             }
@@ -181,15 +179,19 @@ struct FileTransferView: View {
     }
 
     private func fileRow(name: String, isDir: Bool, size: Int64) -> some View {
-        HStack {
+        HStack(spacing: 6) {
             Image(systemName: isDir ? "folder.fill" : "doc")
                 .foregroundStyle(isDir ? Color.accentColor : .secondary)
+                .frame(width: 16)
             Text(name).lineLimit(1).truncationMode(.middle)
             Spacer()
             if !isDir {
                 Text(byteString(size)).font(.caption2).foregroundStyle(.secondary)
             }
         }
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     // MARK: Local FS

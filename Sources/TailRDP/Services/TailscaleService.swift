@@ -10,6 +10,22 @@ final class TailscaleService: ObservableObject {
     @Published var isRefreshing = false
 
     private var refreshGeneration: UInt64 = 0
+    private var autoRefreshTask: Task<Void, Never>?
+    private static let autoRefreshInterval: Duration = .seconds(15 * 60)
+
+    init() {
+        autoRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.autoRefreshInterval)
+                guard !Task.isCancelled else { return }
+                self?.refresh()
+            }
+        }
+    }
+
+    deinit {
+        autoRefreshTask?.cancel()
+    }
 
     /// Auto-detected path (first existing candidate), for display in Settings.
     var detectedPath: String? {

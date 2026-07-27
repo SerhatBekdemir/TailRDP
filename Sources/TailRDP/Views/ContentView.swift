@@ -98,6 +98,8 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .background || phase == .inactive {
                 store.flushPendingSave()
+            } else if phase == .active {
+                tailscale.refresh()
             }
         }
     }
