@@ -13,6 +13,10 @@ enum SFTPService {
     private static let ssh = "/usr/bin/ssh"
     private static let scp = "/usr/bin/scp"
 
+    static var remoteIODisabled: Bool {
+        ProcessInfo.processInfo.environment["TAILRDP_DISABLE_REMOTE_IO"] == "1"
+    }
+
     private static let commonOpts = [
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "ConnectTimeout=10",
@@ -23,6 +27,9 @@ enum SFTPService {
 
     /// Run a shell script on the remote host over SSH. Blocking — use from a Task.
     static func runScript(_ profile: HostProfile, script: String) -> ProcessResult {
+        if remoteIODisabled {
+            return ProcessResult(stdout: "", stderr: "Remote I/O disabled for local QA", exitCode: 125)
+        }
         let start = Date()
         let res = ProcessRunner.run(ssh, commonOpts + [target(profile), script])
         let ms = Int(Date().timeIntervalSince(start) * 1000)
@@ -51,6 +58,9 @@ enum SFTPService {
     }
 
     static func listRemote(_ profile: HostProfile, path: String) -> Result<[RemoteEntry], AppError> {
+        if remoteIODisabled {
+            return .fail("Remote I/O disabled for local QA")
+        }
         let script = """
         cd \(shq(path)) 2>/dev/null || { echo "__ERR__cd"; exit 9; }
         for f in .* *; do
@@ -86,6 +96,9 @@ enum SFTPService {
 
     static func push(_ profile: HostProfile, localPaths: [String], remoteDir: String) -> Result<String, AppError> {
         guard !localPaths.isEmpty else { return .fail("No local items selected") }
+        if remoteIODisabled {
+            return .fail("Remote I/O disabled for local QA")
+        }
         let args = commonOpts + ["-r"] + localPaths + ["\(target(profile)):\(remoteDir)"]
         let res = ProcessRunner.run(scp, args)
         return res.ok
@@ -105,6 +118,9 @@ enum SFTPService {
 
     static func pull(_ profile: HostProfile, remotePaths: [String], localDir: String) -> Result<String, AppError> {
         guard !remotePaths.isEmpty else { return .fail("No remote items selected") }
+        if remoteIODisabled {
+            return .fail("Remote I/O disabled for local QA")
+        }
         let sources = remotePaths.map { scpRemotePath(profile, path: $0) }
         let args = commonOpts + ["-r"] + sources + [localDir]
         let res = ProcessRunner.run(scp, args)

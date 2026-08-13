@@ -152,12 +152,39 @@ struct ConnectionSettingsView: View {
             }
 
             Section("Launch command") {
-                Text(launcher.previewCommand(for: profile.profileForConnect()))
+                TextEditor(text: commandLineBinding)
                     .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-                    .padding(.vertical, 2)
-                Text("Shows what Connect will run (last good settings when available).")
+                    .frame(minHeight: 72, maxHeight: 120)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(.quaternary)
+                    }
+
+                HStack {
+                    Label(
+                        profile.launchCommandOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? "Generated from settings"
+                            : "Custom command is active",
+                        systemImage: profile.launchCommandOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? "wand.and.stars"
+                            : "pencil"
+                    )
+                    .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Reset to generated") {
+                        profile.launchCommandOverride = ""
+                    }
+                    .disabled(profile.launchCommandOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                if let launchCommandValidationError {
+                    Label(launchCommandValidationError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+
+                Text("Edit the full FreeRDP command. The saved password is inserted securely when you Connect and is never stored in this field.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -193,6 +220,23 @@ struct ConnectionSettingsView: View {
 
     private var customResolutionLabel: String {
         "\(profile.settings.width) × \(profile.settings.height)"
+    }
+
+    private var launchCommandValidationError: String? {
+        launcher.commandLineValidationError(for: profile.profileForConnect())
+    }
+
+    private var commandLineBinding: Binding<String> {
+        Binding(
+            get: {
+                launcher.previewCommand(for: profile.profileForConnect())
+            },
+            set: { value in
+                let normalized = FreeRDPCommandLine.sanitized(value) ?? value
+                let generated = launcher.generatedPreviewCommand(for: profile.profileForConnect())
+                profile.launchCommandOverride = normalized == generated ? "" : normalized
+            }
+        )
     }
 
     private var resolutionBinding: Binding<String> {

@@ -13,6 +13,8 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
     var rdpPort: Int
     var settings: RDPSettings
     var lastRemoteDir: String
+    /// Optional sanitized full FreeRDP command override edited in Connection settings.
+    var launchCommandOverride: String
     var lastWorking: LastWorkingSnapshot?
     var sessionHealth: SessionHealth?
     /// Pause/crash banner — persists when switching hosts; cleared on logout or dismiss.
@@ -76,6 +78,7 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, hostName, displayName, address, os, online
         case rdpUsername, sshUsername, rdpPort, settings, lastRemoteDir
+        case launchCommandOverride
         case lastWorking, sessionHealth, stickyBanner
     }
 
@@ -83,6 +86,7 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
         id: String, hostName: String, displayName: String, address: String, os: String,
         online: Bool, rdpUsername: String, sshUsername: String, rdpPort: Int,
         settings: RDPSettings, lastRemoteDir: String,
+        launchCommandOverride: String = "",
         lastWorking: LastWorkingSnapshot? = nil, sessionHealth: SessionHealth? = nil,
         stickyBanner: HostStatusBanner? = nil
     ) {
@@ -97,6 +101,7 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
         self.rdpPort = rdpPort
         self.settings = settings
         self.lastRemoteDir = lastRemoteDir
+        self.launchCommandOverride = launchCommandOverride
         self.lastWorking = lastWorking
         self.sessionHealth = sessionHealth
         self.stickyBanner = stickyBanner
@@ -116,9 +121,30 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
         rdpPort = try c.decode(Int.self, forKey: .rdpPort)
         settings = try c.decode(RDPSettings.self, forKey: .settings)
         lastRemoteDir = try c.decode(String.self, forKey: .lastRemoteDir)
+        let rawCommand = try c.decodeIfPresent(String.self, forKey: .launchCommandOverride) ?? ""
+        launchCommandOverride = FreeRDPCommandLine.sanitized(rawCommand) ?? ""
         lastWorking = try c.decodeIfPresent(LastWorkingSnapshot.self, forKey: .lastWorking)
         sessionHealth = try c.decodeIfPresent(SessionHealth.self, forKey: .sessionHealth)
         stickyBanner = try c.decodeIfPresent(HostStatusBanner.self, forKey: .stickyBanner)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(hostName, forKey: .hostName)
+        try c.encode(displayName, forKey: .displayName)
+        try c.encode(address, forKey: .address)
+        try c.encode(os, forKey: .os)
+        try c.encode(online, forKey: .online)
+        try c.encode(rdpUsername, forKey: .rdpUsername)
+        try c.encode(sshUsername, forKey: .sshUsername)
+        try c.encode(rdpPort, forKey: .rdpPort)
+        try c.encode(settings, forKey: .settings)
+        try c.encode(lastRemoteDir, forKey: .lastRemoteDir)
+        try c.encode(FreeRDPCommandLine.sanitized(launchCommandOverride) ?? "", forKey: .launchCommandOverride)
+        try c.encodeIfPresent(lastWorking, forKey: .lastWorking)
+        try c.encodeIfPresent(sessionHealth, forKey: .sessionHealth)
+        try c.encodeIfPresent(stickyBanner, forKey: .stickyBanner)
     }
 
     static func make(from peer: TailscalePeer) -> HostProfile {

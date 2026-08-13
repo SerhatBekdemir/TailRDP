@@ -21,15 +21,8 @@ enum SessionCoordinator {
         let isLinuxResume = base.isLinux
             && (resumingPaused || base.health.lastEndKind == .paused || base.stickyBanner?.style == .paused)
 
-        // Gnome Remote Desktop can hang if the client reconnects before the prior
-        // RDP socket is fully torn down — give Linux hosts a moment after pause.
-        if isLinuxResume {
-            let delayMs = base.health.linuxResumeDelayMs
-            AppLog.session.info("Linux resume delay \(delayMs)ms for \(profileID, privacy: .public)")
-            try? await Task.sleep(for: .milliseconds(delayMs))
-        }
-
         // Only heal before connect after a prior crash — never after pause or logout.
+        // Runs before the settle wait below: healing can itself end remote sessions.
         if base.isLinux,
            base.health.consecutiveFailures > 0,
            base.health.lastEndKind == .crashed,
@@ -37,6 +30,33 @@ enum SessionCoordinator {
             if let healed = await healBeforeConnect(profile: base) {
                 statusParts.append(healed)
             }
+        }
+
+        // Gnome Remote Desktop can hang if the client reconnects before the prior
+        // RDP socket is fully torn down — give Linux hosts a moment after pause.
+        // A session that fully ended is worse than a pause: gnome-remote-desktop
+        // must respawn the login screen and hand the RDP connection over to it, and
+        // a client that connects mid-respawn gets a redirect the greeter never
+        // accepts — an unrecoverable black window, with no client exit to detect.
+        let secondsSinceRemoteEnd = Self.remoteSessionEndedAt[profileID]
+            .map { Date().timeIntervalSince($0) }
+        if let delayMs = Self.linuxSettleDelayMs(
+            profile: base,
+            isLinuxResume: isLinuxResume,
+            secondsSinceRemoteEnd: secondsSinceRemoteEnd
+        ) {
+            AppLog.session.info("Linux settle delay \(delayMs)ms for \(profileID, privacy: .public)")
+            // A multi-second wait behind a bare spinner reads as a hang — say why.
+            if delayMs >= SessionHealth.linuxRestartSettleDelayMs {
+                store.setFlashBanner(
+                    profileID: profileID,
+                    banner: HostFlashBanner(
+                        text: "Waiting for the host's login screen to come back…",
+                        style: .paused
+                    )
+                )
+            }
+            try? await Task.sleep(for: .milliseconds(delayMs))
         }
 
         let launchProfile = base.profileForConnect()
@@ -139,6 +159,40 @@ enum SessionCoordinator {
         }
     }
 
+    /// Wall-clock of the last remote session TailRDP ended, per host. In memory only:
+    /// the handover race exists only between that teardown and the next connect in the
+    /// same run. A relaunched app is already past it.
+    private static var remoteSessionEndedAt: [String: Date] = [:]
+
+    static func noteRemoteSessionEnded(profileID: String) {
+        remoteSessionEndedAt[profileID] = Date()
+    }
+
+    /// How long to wait before connecting a Linux host, or nil for no wait.
+    ///
+    /// Resuming a paused session only waits for the old RDP socket to clear. A session
+    /// TailRDP just ended waits longer: gnome-remote-desktop has to bring the login
+    /// screen back and hand the connection over to it. Time the user already spent
+    /// counts against that wait, so a slow click costs nothing extra and a host left
+    /// alone for an hour is not taxed at all.
+    ///
+    /// ponytail: fixed delay, not a readiness probe — a host slower than
+    /// `linuxRestartSettleDelayMs` still races. Upgrade path: poll the host over SSH
+    /// until its greeter session stops churning, and keep this as the timeout.
+    static func linuxSettleDelayMs(
+        profile: HostProfile,
+        isLinuxResume: Bool,
+        secondsSinceRemoteEnd: TimeInterval?
+    ) -> Int? {
+        guard profile.isLinux else { return nil }
+        if let elapsed = secondsSinceRemoteEnd {
+            let target = max(profile.health.linuxResumeDelayMs, SessionHealth.linuxRestartSettleDelayMs)
+            let remaining = target - Int(elapsed * 1000)
+            if remaining > 0 { return remaining }
+        }
+        return isLinuxResume ? profile.health.linuxResumeDelayMs : nil
+    }
+
     static func promoteCurrentSettings(profileID: String, store: ProfileStore) {
         store.update(id: profileID, immediate: true) { p in
             p.lastWorking = LastWorkingSnapshot(settings: p.settings, savedAt: Date())
@@ -164,6 +218,7 @@ enum SessionCoordinator {
             case .failure(let err):
                 return (err.message, true)
             case .success(let detail):
+                noteRemoteSessionEnded(profileID: profileID)
                 store.clearPausedSession(profileID: profileID)
                 store.update(id: profileID, immediate: true) { p in
                     p.sessionHealth = SessionHealth(lastEndKind: .loggedOut)
@@ -340,6 +395,12 @@ enum SessionCoordinator {
         switch applied {
         case .failure: return nil
         case .success(let detail):
+            // These presets end remote sessions, so the host is respawning its login
+            // screen — the connect below has to wait for the handover, same as a
+            // force-stop does.
+            if preset == .endStuckSessions || preset == .resetRemoteDesktop {
+                noteRemoteSessionEnded(profileID: profile.id)
+            }
             var msg = RemoteDisplayRecovery.plainRecoveryLabel(preset)
             if !detail.isEmpty, preset != .useSafeClientSettings { msg += " — \(detail)" }
             return msg.isEmpty ? nil : msg

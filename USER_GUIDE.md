@@ -44,7 +44,7 @@ TailRDP is a thin wrapper: it launches `tailscale`, `sdl-freerdp`, and optionall
 ```sh
 git clone <your-repo> TailRDP && cd TailRDP
 ./build.sh
-# App is at TailRDP.app and dist/TailRDP.app
+# Distributable app is at dist/TailRDP-1.0.2.app; installed app is in /Applications
 INSTALL=1 ./build.sh   # copies to /Applications
 ```
 
@@ -52,7 +52,7 @@ INSTALL=1 ./build.sh   # copies to /Applications
 
 TailRDP is ad-hoc signed, not notarized. On first open:
 
-1. Finder → right-click `TailRDP.app` → **Open**, confirm **Open** in the dialog, **or**
+1. Finder → right-click `dist/TailRDP-1.0.2.app` → **Open**, confirm **Open** in the dialog, **or**
 2. System Settings → Privacy & Security → allow TailRDP
 
 ---
@@ -145,6 +145,12 @@ FreeRDP’s built-in auto-reconnect is **disabled for Linux hosts** because it c
 - **Clipboard**, **sound**, **⌘→Ctrl** remapping
 - **Auto-reconnect** (FreeRDP; not used on Linux)
 - **Smart reconnect** — after crashes only, run Linux SSH recovery (never on pause/logout)
+
+### Launch command
+
+The **Launch command** editor shows the full FreeRDP command for the selected host. Edit it to add or change FreeRDP options, then Connect to use the custom command. **Reset to generated** returns to the normal settings-driven command.
+
+The saved password is never stored in the command field or profile export. TailRDP replaces any `/p:` value with the saved credential only at launch.
 
 ### Last good settings
 

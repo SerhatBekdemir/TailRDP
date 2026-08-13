@@ -224,10 +224,16 @@ struct FileTransferView: View {
     // MARK: Remote FS
 
     private func remoteHomeFallback() -> String {
-        if remoteDir.hasPrefix("/home/") || remoteDir.hasPrefix("/Users/") {
-            return remoteDir.split(separator: "/").prefix(3).joined(separator: "/")
+        Self.remoteHomeFallback(for: remoteDir, sshUsername: profile.sshUsername)
+    }
+
+    static func remoteHomeFallback(for remoteDir: String, sshUsername: String) -> String {
+        let components = remoteDir.split(separator: "/")
+        guard components.count >= 2,
+              components[0] == "home" || components[0] == "Users" else {
+            return "/home/\(sshUsername)"
         }
-        return "/home/\(profile.sshUsername)"
+        return "/" + components.prefix(2).joined(separator: "/")
     }
 
     private func resolveRemoteHome() {

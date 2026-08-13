@@ -76,7 +76,7 @@ final class TailscaleService: ObservableObject {
     }
 
     private func apply(
-        parsed: (selfPeer: TailscalePeer?, peers: [TailscalePeer])?,
+        parsed: (backendState: String, selfPeer: TailscalePeer?, peers: [TailscalePeer])?,
         stdout: String,
         stderr: String,
         generation: UInt64
@@ -88,7 +88,7 @@ final class TailscaleService: ObservableObject {
                 selfPeer = parsed.selfPeer
                 peers = parsed.peers
             }
-            lastError = nil
+            lastError = Self.backendStateError(parsed.backendState)
         } else {
             let err = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             let out = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -97,9 +97,28 @@ final class TailscaleService: ObservableObject {
         }
     }
 
-    nonisolated static func parse(_ json: String) -> (selfPeer: TailscalePeer?, peers: [TailscalePeer])? {
+    /// Human-readable reason the tunnel is down, or nil when the backend is up.
+    /// A stale netmap parses fine while the tunnel is down, so this is the only
+    /// signal that peers are unreachable.
+    nonisolated static func backendStateError(_ state: String) -> String? {
+        switch state {
+        case "Running": return nil
+        case "Stopped": return "Tailscale is disconnected — open Tailscale and click Connect"
+        case "NeedsLogin": return "Tailscale is signed out — sign in from the Tailscale menu"
+        case "NeedsMachineAuth": return "This machine needs approval in the Tailscale admin console"
+        case "Starting": return "Tailscale is starting…"
+        default: return "Tailscale is not running (\(state))"
+        }
+    }
+
+    nonisolated static func parse(
+        _ json: String
+    ) -> (backendState: String, selfPeer: TailscalePeer?, peers: [TailscalePeer])? {
         guard let data = json.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+
+        let backendState = obj["BackendState"] as? String ?? "NoState"
+        let tunnelUp = backendState == "Running"
 
         func makePeer(_ d: [String: Any], isSelf: Bool) -> TailscalePeer? {
             guard let host = d["HostName"] as? String else { return nil }
@@ -111,7 +130,7 @@ final class TailscaleService: ObservableObject {
                 dnsName: d["DNSName"] as? String ?? "",
                 os: (d["OS"] as? String ?? "").lowercased(),
                 ipv4: ipv4,
-                online: d["Online"] as? Bool ?? false,
+                online: tunnelUp && (d["Online"] as? Bool ?? false),
                 isSelf: isSelf
             )
         }
@@ -126,6 +145,6 @@ final class TailscaleService: ObservableObject {
         peers.sort {
             ($0.online ? 0 : 1, $0.hostName.lowercased()) < ($1.online ? 0 : 1, $1.hostName.lowercased())
         }
-        return (selfPeer, peers)
+        return (backendState, selfPeer, peers)
     }
 }

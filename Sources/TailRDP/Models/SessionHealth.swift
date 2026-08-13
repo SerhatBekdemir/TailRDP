@@ -132,7 +132,12 @@ struct SessionHealth: Codable, Equatable, Sendable {
 
     static let defaultLinuxResumeDelayMs = 3000
     static let minLinuxResumeDelayMs = 1500
-    static let maxLinuxResumeDelayMs = 8000
+    static let maxLinuxResumeDelayMs = 20000
+    /// Wait after a Linux session fully ended, covering the host respawning its
+    /// login screen for the gnome-remote-desktop handover. Measured on GNOME 50:
+    /// portals ready ~4s and sound.target ~13s after the session was killed, with a
+    /// connect at 14s still landing too early.
+    static let linuxRestartSettleDelayMs = 18000
     static let resumeDelayStepMs = 500
     static let resumeDelayBackoffMs = 1500
 }

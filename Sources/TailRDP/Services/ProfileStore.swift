@@ -281,6 +281,10 @@ final class ProfileStore: ObservableObject {
         var skipped = 0
         var needsPassword: [String] = []
         for profile in bundle.profiles {
+            guard HostOS.isAllowedProfile(profile.os) else {
+                skipped += 1
+                continue
+            }
             if merge, profiles.contains(where: { $0.id == profile.id }) {
                 if let i = profiles.firstIndex(where: { $0.id == profile.id }) {
                     let local = profiles[i]

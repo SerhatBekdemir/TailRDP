@@ -41,6 +41,34 @@ final class RDPLauncher: ObservableObject {
     }
 
     func buildArguments(for profile: HostProfile, password: String?) -> [String] {
+        if !profile.launchCommandOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let custom = FreeRDPCommandLine.arguments(from: profile.launchCommandOverride, password: password) {
+            return custom
+        }
+        return generatedArguments(for: profile, password: password)
+    }
+
+    func commandLineValidationError(for profile: HostProfile) -> String? {
+        let command = profile.launchCommandOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty else { return nil }
+        return FreeRDPCommandLine.validationError(for: command)
+    }
+
+    func generatedPreviewCommand(for profile: HostProfile) -> String {
+        let bin = (binaryPath as NSString?)?.lastPathComponent ?? "sdl-freerdp"
+        let masked = CredentialStore.shared.hasPassword(for: profile.id) ? "••••••" : nil
+        return ([bin] + generatedArguments(for: profile, password: masked)).joined(separator: " ")
+    }
+
+    func previewCommand(for profile: HostProfile) -> String {
+        let custom = profile.launchCommandOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !custom.isEmpty {
+            return FreeRDPCommandLine.sanitized(custom) ?? custom
+        }
+        return generatedPreviewCommand(for: profile)
+    }
+
+    private func generatedArguments(for profile: HostProfile, password: String?) -> [String] {
         let s = profile.settings
         var a: [String] = [
             "/v:\(profile.address):\(profile.rdpPort)",
@@ -78,12 +106,6 @@ final class RDPLauncher: ObservableObject {
         args.append("/floatbar:sticky:on,default:visible,show:fullscreen")
     }
 
-    func previewCommand(for profile: HostProfile) -> String {
-        let bin = (binaryPath as NSString?)?.lastPathComponent ?? "sdl-freerdp"
-        let masked = CredentialStore.shared.hasPassword(for: profile.id) ? "••••••" : nil
-        return ([bin] + buildArguments(for: profile, password: masked)).joined(separator: " ")
-    }
-
     func launch(profile: HostProfile) async -> String? {
         guard let bin = binaryPath else {
             return "sdl-freerdp not found — install with: brew install freerdp"
@@ -91,6 +113,9 @@ final class RDPLauncher: ObservableObject {
         guard !profile.address.isEmpty else { return "No address set for this machine" }
         guard let password = CredentialStore.shared.password(for: profile.id), !password.isEmpty else {
             return "No saved sign-in for this machine"
+        }
+        if let error = commandLineValidationError(for: profile) {
+            return "Launch command invalid — \(error)"
         }
 
         let generation = (sessionGeneration[profile.id] ?? 0) + 1

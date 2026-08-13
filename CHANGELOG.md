@@ -1,8 +1,23 @@
 # Changelog
 
-All notable changes to TailRDP. Version **1.0.0** matches `build.sh` / Info.plist.
+All notable changes to TailRDP. Version **1.0.2** matches `build.sh` / Info.plist.
 
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
+
+---
+
+## [1.0.2] — 2026-08-13
+
+- Surface Tailscale's backend state: a stopped or signed-out tailnet now reports why instead of listing cached peers as online and failing at connect.
+- Wait for a Linux host to bring its login screen back before reconnecting after a session is force-ended or healed, so the gnome-remote-desktop handover cannot land mid-respawn and leave a black window.
+
+---
+
+## [1.0.1] — 2026-07-31
+
+- Matrix-green main application icon; preserved the original white icon for QA builds.
+- Versioned app artifacts and installation names now use the release version (`TailRDP-1.0.1.app`).
+- Documented patch, medium, and major version increments and build-time overrides.
 
 ---
 
@@ -29,6 +44,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Audio uses FreeRDP `/sound`; Connection settings now provide a persisted editable full launch-command override with password redaction and validation.
 - Sidebar shows only desktop RDP candidates (linux/windows/macos/other); non-candidates dropped on load/merge
 - Launch-command preview and host header now reflect actual launch settings under safe fallback (`HostProfile.connectSettings`)
 - Profile saves debounced; remote scripts and dependency probes cached; session-end SSH and disk writes deduped
@@ -91,4 +107,6 @@ Distribution-ready personal tailnet RDP client (`app.tailrdp`).
 See `git log --oneline` for full history.
 
 [Unreleased]: compare with latest tag when releases begin
+[1.0.2]: tailnet state reporting and Linux handover settle wait
+[1.0.1]: versioned Matrix-green icon release
 [1.0.0]: initial distributable milestone

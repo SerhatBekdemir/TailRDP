@@ -82,9 +82,124 @@ final class DiscoveryTests: XCTestCase {
         let profile = HostProfile.make(from: peer)
         XCTAssertEqual(profile.os, "macOS")
     }
+
+    /// A stopped backend still returns a full stale netmap with Online:true peers.
+    /// Those peers are unreachable — no tailnet route exists — so they must not
+    /// render as online, and the state must surface as an error.
+    func testStoppedBackendForcesPeersOfflineAndReportsError() {
+        let json = """
+        {"BackendState":"Stopped",
+         "Self":{"HostName":"mbp","OS":"macOS","TailscaleIPs":["100.1.1.1"],"Online":true},
+         "Peer":{"k":{"HostName":"box","OS":"linux","TailscaleIPs":["100.1.1.2"],"Online":true}}}
+        """
+        let parsed = TailscaleService.parse(json)
+        XCTAssertEqual(parsed?.backendState, "Stopped")
+        XCTAssertEqual(parsed?.peers.first?.online, false)
+        XCTAssertEqual(parsed?.selfPeer?.online, false)
+        XCTAssertNotNil(TailscaleService.backendStateError("Stopped"))
+    }
+
+    func testRunningBackendPreservesPeerOnlineFlags() {
+        let json = """
+        {"BackendState":"Running",
+         "Peer":{"a":{"HostName":"up","OS":"linux","TailscaleIPs":["100.1.1.2"],"Online":true},
+                 "b":{"HostName":"down","OS":"linux","TailscaleIPs":["100.1.1.3"],"Online":false}}}
+        """
+        let parsed = TailscaleService.parse(json)
+        XCTAssertEqual(parsed?.peers.first(where: { $0.hostName == "up" })?.online, true)
+        XCTAssertEqual(parsed?.peers.first(where: { $0.hostName == "down" })?.online, false)
+        XCTAssertNil(TailscaleService.backendStateError("Running"))
+    }
 }
 
 final class RecoveryTests: XCTestCase {
+    /// A force-ended Linux session clears the paused banner and records .loggedOut, so
+    /// the resume path no longer matches. It still must wait — gnome-remote-desktop is
+    /// respawning the login screen, and a client that connects mid-respawn gets a
+    /// handover redirect the greeter never accepts, leaving a black window.
+    @MainActor
+    func testLoggedOutLinuxHostWaitsForLoginScreen() {
+        func profile(os: String, endKind: SessionEndKind?) -> HostProfile {
+            var p = HostProfile(
+                id: "box", hostName: "box", displayName: "box", address: "100.64.0.1", os: os,
+                online: true, rdpUsername: "u", sshUsername: "u", rdpPort: 3389,
+                settings: .default, lastRemoteDir: ""
+            )
+            p.sessionHealth = SessionHealth(lastEndKind: endKind)
+            return p
+        }
+
+        // The regression: TailRDP just ended the session, so wait even though this is
+        // not a resume and the recorded end kind is a plain logout.
+        XCTAssertEqual(
+            SessionCoordinator.linuxSettleDelayMs(
+                profile: profile(os: "linux", endKind: .loggedOut),
+                isLinuxResume: false,
+                secondsSinceRemoteEnd: 0
+            ),
+            SessionHealth.linuxRestartSettleDelayMs
+        )
+        // Time already spent counts against the wait.
+        XCTAssertEqual(
+            SessionCoordinator.linuxSettleDelayMs(
+                profile: profile(os: "linux", endKind: .loggedOut),
+                isLinuxResume: false,
+                secondsSinceRemoteEnd: 5
+            ),
+            SessionHealth.linuxRestartSettleDelayMs - 5000
+        )
+        // Waited it out already — no tax.
+        XCTAssertNil(
+            SessionCoordinator.linuxSettleDelayMs(
+                profile: profile(os: "linux", endKind: .loggedOut),
+                isLinuxResume: false,
+                secondsSinceRemoteEnd: 600
+            )
+        )
+        // A logout from an earlier app run has no timestamp, so nothing to wait for.
+        XCTAssertNil(
+            SessionCoordinator.linuxSettleDelayMs(
+                profile: profile(os: "linux", endKind: .loggedOut),
+                isLinuxResume: false,
+                secondsSinceRemoteEnd: nil
+            )
+        )
+        // Crash recovery ends sessions too, and it is not a resume either.
+        XCTAssertEqual(
+            SessionCoordinator.linuxSettleDelayMs(
+                profile: profile(os: "linux", endKind: .crashed),
+                isLinuxResume: false,
+                secondsSinceRemoteEnd: 0
+            ),
+            SessionHealth.linuxRestartSettleDelayMs
+        )
+        // Paused resume with no teardown keeps the shorter socket-clear wait.
+        XCTAssertEqual(
+            SessionCoordinator.linuxSettleDelayMs(
+                profile: profile(os: "linux", endKind: .paused),
+                isLinuxResume: true,
+                secondsSinceRemoteEnd: nil
+            ),
+            SessionHealth.defaultLinuxResumeDelayMs
+        )
+        // A clean first connect waits for nothing.
+        XCTAssertNil(
+            SessionCoordinator.linuxSettleDelayMs(
+                profile: profile(os: "linux", endKind: nil),
+                isLinuxResume: false,
+                secondsSinceRemoteEnd: nil
+            )
+        )
+        // Windows hosts have no handover to race.
+        XCTAssertNil(
+            SessionCoordinator.linuxSettleDelayMs(
+                profile: profile(os: "windows", endKind: .loggedOut),
+                isLinuxResume: false,
+                secondsSinceRemoteEnd: 0
+            )
+        )
+    }
+
     func testBenignDisconnectSkipsRecovery() {
         let preset = RemoteDisplayRecovery.chooseRecovery(
             errInfo: "ERRINFO_LOGOFF_BY_USER", report: nil, failureCount: 5
@@ -186,8 +301,57 @@ final class RDPLauncherArgumentTests: XCTestCase {
         XCTAssertTrue(args.contains("/p:secret"))
         // /from-stdin rejected: FreeRDP reads passphrases via tty ioctls — unusable from a GUI app.
         XCTAssertFalse(args.contains("/from-stdin"))
+        XCTAssertTrue(args.contains("/sound"))
+        XCTAssertFalse(args.contains("/sound:latency:200"))
         XCTAssertTrue(args.contains("/cert:tofu"))
         XCTAssertFalse(args.contains("/cert:ignore"))
+    }
+
+    @MainActor
+    func testSoundArgumentFollowsAudioSetting() {
+        let launcher = RDPLauncher()
+        var settings = RDPSettings()
+        settings.sound = false
+        let profile = HostProfile(
+            id: "win", hostName: "win", displayName: "win", address: "100.64.0.2", os: "windows",
+            online: true, rdpUsername: "u", sshUsername: "u", rdpPort: 3389,
+            settings: settings, lastRemoteDir: ""
+        )
+        let args = launcher.buildArguments(for: profile, password: nil)
+        XCTAssertFalse(args.contains("/sound:latency:200"))
+        XCTAssertFalse(args.contains("/sound"))
+    }
+
+    @MainActor
+    func testCustomCommandUsesEditedArgumentsAndInjectsSavedPassword() {
+        let launcher = RDPLauncher()
+        let profile = HostProfile(
+            id: "win", hostName: "win", displayName: "win", address: "100.64.0.2", os: "windows",
+            online: true, rdpUsername: "u", sshUsername: "u", rdpPort: 3389,
+            settings: .default, lastRemoteDir: "",
+            launchCommandOverride: "sdl-freerdp /v:custom.example:3390 /u:custom-user /sound"
+        )
+        let args = launcher.buildArguments(for: profile, password: "secret")
+        XCTAssertFalse(args.contains("sdl-freerdp"))
+        XCTAssertTrue(args.contains("/v:custom.example:3390"))
+        XCTAssertTrue(args.contains("/u:custom-user"))
+        XCTAssertTrue(args.contains("/sound"))
+        XCTAssertTrue(args.contains("/p:secret"))
+        XCTAssertNil(launcher.commandLineValidationError(for: profile))
+    }
+
+    func testCustomCommandSanitizesPasswordAndRejectsMalformedTarget() {
+        let command = "sdl-freerdp /v:host:3389 /p:real-secret /sound"
+        XCTAssertEqual(
+            FreeRDPCommandLine.sanitized(command),
+            "sdl-freerdp /v:host:3389 /p:•••••• /sound"
+        )
+        XCTAssertEqual(
+            FreeRDPCommandLine.validationError(for: "sdl-freerdp /v:host:3389 /sound"),
+            nil
+        )
+        XCTAssertNotNil(FreeRDPCommandLine.validationError(for: "sdl-freerdp /sound"))
+        XCTAssertNotNil(FreeRDPCommandLine.validationError(for: "sdl-freerdp '/v:host:3389"))
     }
 
     @MainActor
@@ -304,6 +468,25 @@ final class ProfileExportTests: XCTestCase {
         XCTAssertTrue(result.needsPassword.contains("Dev"))
     }
 
+    func testCustomLaunchCommandRoundTripRedactsPassword() throws {
+        let profile = HostProfile(
+            id: "dev", hostName: "dev", displayName: "Dev", address: "100.64.0.3", os: "linux",
+            online: false, rdpUsername: "alice", sshUsername: "alice", rdpPort: 3389,
+            settings: .default, lastRemoteDir: "/home/alice",
+            launchCommandOverride: "sdl-freerdp /v:dev:3389 /p:real-secret /sound"
+        )
+        let data = try JSONEncoder().encode(profile)
+        let encoded = String(decoding: data, as: UTF8.self)
+        XCTAssertFalse(encoded.contains("real-secret"))
+        XCTAssertTrue(encoded.contains(FreeRDPCommandLine.passwordPlaceholder))
+
+        let decoded = try JSONDecoder().decode(HostProfile.self, from: data)
+        XCTAssertEqual(
+            decoded.launchCommandOverride,
+            "sdl-freerdp /v:dev:3389 /p:\(FreeRDPCommandLine.passwordPlaceholder) /sound"
+        )
+    }
+
     func testImportMergePreservesLocalSessionState() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("TailRDPExport-\(UUID().uuidString)/profiles.json")
@@ -334,6 +517,30 @@ final class ProfileExportTests: XCTestCase {
         XCTAssertEqual(store.profiles.first?.health.lastEndKind, .paused)
         XCTAssertEqual(store.profiles.first?.stickyBanner?.style, .paused)
         XCTAssertTrue(store.profiles.first?.online == true)
+    }
+
+    func testImportSkipsNonRDPCapableProfiles() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TailRDPExport-\(UUID().uuidString)/profiles.json")
+        let store = ProfileStore(testProfilesURL: url)
+        let valid = HostProfile(
+            id: "box", hostName: "box", displayName: "Box", address: "192.0.2.10", os: "linux",
+            online: false, rdpUsername: "qa-user", sshUsername: "qa-user", rdpPort: 3389,
+            settings: .default, lastRemoteDir: ""
+        )
+        let invalid = HostProfile(
+            id: "phone", hostName: "phone", displayName: "Phone", address: "192.0.2.11", os: "android",
+            online: false, rdpUsername: "qa-user", sshUsername: "qa-user", rdpPort: 3389,
+            settings: .default, lastRemoteDir: ""
+        )
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        let data = try enc.encode(ProfileExportBundle(profiles: [valid, invalid]))
+
+        let result = try store.importData(data, merge: false)
+        XCTAssertEqual(result.imported, 1)
+        XCTAssertEqual(result.skipped, 1)
+        XCTAssertEqual(store.profiles.map(\.id), ["box"])
     }
 }
 
@@ -616,5 +823,46 @@ final class AppDataDirTests: XCTestCase {
     func testDefaultIsApplicationSupport() {
         unsetenv("TAILRDP_DATA_DIR")
         XCTAssertTrue(AppDataDir.base.path.hasSuffix("Application Support/TailRDP"))
+    }
+
+    func testQABooleanArgumentParsing() {
+        XCTAssertEqual(AppLaunchOverrides.parseBool(" YES "), true)
+        XCTAssertEqual(AppLaunchOverrides.parseBool("off"), false)
+        XCTAssertNil(AppLaunchOverrides.parseBool("maybe"))
+    }
+
+    func testRemoteIOKillSwitchReadsQAEnvironment() {
+        setenv("TAILRDP_DISABLE_REMOTE_IO", "1", 1)
+        defer { unsetenv("TAILRDP_DISABLE_REMOTE_IO") }
+        XCTAssertTrue(SFTPService.remoteIODisabled)
+    }
+}
+
+final class DependencyWarningTests: XCTestCase {
+    func testConfiguredExecutableOverridesSatisfyDependencyCheck() {
+        XCTAssertTrue(
+            ContentView.missingDependencyNames(
+                freerdpOverride: "/usr/bin/false",
+                tailscaleOverride: "/usr/bin/false"
+            ).isEmpty
+        )
+    }
+
+}
+
+final class FileTransferPathTests: XCTestCase {
+    func testRemoteHomeFallbackKeepsAbsoluteHomePath() {
+        XCTAssertEqual(
+            FileTransferView.remoteHomeFallback(for: "/home/qa-user/projects", sshUsername: "fallback"),
+            "/home/qa-user"
+        )
+        XCTAssertEqual(
+            FileTransferView.remoteHomeFallback(for: "/Users/qa-user/Documents", sshUsername: "fallback"),
+            "/Users/qa-user"
+        )
+        XCTAssertEqual(
+            FileTransferView.remoteHomeFallback(for: "/tmp", sshUsername: "qa-user"),
+            "/home/qa-user"
+        )
     }
 }

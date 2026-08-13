@@ -4,17 +4,13 @@ struct AboutView: View {
     @EnvironmentObject var tailscale: TailscaleService
     @EnvironmentObject var launcher: RDPLauncher
 
-    private var version: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-    }
-
     var body: some View {
         VStack(spacing: 16) {
             Image(systemName: "desktopcomputer.and.arrow.down")
                 .font(.system(size: 48))
                 .foregroundStyle(Color.accentColor)
-            Text("TailRDP").font(.title).bold()
-            Text("Version \(version)").foregroundStyle(.secondary)
+            Text(AppIdentity.displayName).font(.title).bold()
+            Text("Version \(AppIdentity.version)").foregroundStyle(.secondary)
             Text("Bundle ID: app.tailrdp")
                 .font(.caption)
                 .foregroundStyle(.tertiary)

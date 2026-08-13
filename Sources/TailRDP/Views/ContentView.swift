@@ -10,20 +10,29 @@ struct ContentView: View {
     @State private var sessionEndGeneration: [String: UInt64] = [:]
     @AppStorage(AppSettingsKey.hasCompletedFirstRun) private var hasCompletedFirstRun = false
     @AppStorage(AppSettingsKey.dismissedDependencyWarning) private var dismissedDepWarning = false
+    @AppStorage(AppSettingsKey.tailscaleBinaryPath) private var tailscaleOverride = ""
     @AppStorage(AppSettingsKey.freerdpBinaryPath) private var freerdpOverride = ""
     @State private var showWizard = false
     @Environment(\.scenePhase) private var scenePhase
 
     private var missingDependencyMessage: String? {
-        var missing: [String] = []
-        if !DependencyChecker.freerdp(override: freerdpOverride.isEmpty ? nil : freerdpOverride).found {
-            missing.append("FreeRDP")
-        }
-        if !DependencyChecker.tailscale(override: nil).found {
-            missing.append("Tailscale")
-        }
+        let missing = Self.missingDependencyNames(
+            freerdpOverride: freerdpOverride.isEmpty ? nil : freerdpOverride,
+            tailscaleOverride: tailscaleOverride.isEmpty ? nil : tailscaleOverride
+        )
         guard !missing.isEmpty else { return nil }
         return "\(missing.joined(separator: " and ")) not found — open Settings to configure paths or install dependencies."
+    }
+
+    static func missingDependencyNames(freerdpOverride: String?, tailscaleOverride: String?) -> [String] {
+        var missing: [String] = []
+        if !DependencyChecker.freerdp(override: freerdpOverride).found {
+            missing.append("FreeRDP")
+        }
+        if !DependencyChecker.tailscale(override: tailscaleOverride).found {
+            missing.append("Tailscale")
+        }
+        return missing
     }
 
     var body: some View {
@@ -63,6 +72,7 @@ struct ContentView: View {
             if !hasCompletedFirstRun {
                 showWizard = true
             }
+            resetDependencyWarningIfResolved()
             if !tailscale.peers.isEmpty { store.merge(peers: tailscale.peers) }
             if selection == nil { selectDefault() }
         }
@@ -71,10 +81,8 @@ struct ContentView: View {
                 .environmentObject(tailscale)
                 .environmentObject(store)
         }
-        .onChange(of: showWizard) { _, showing in
-            if !showing && !hasCompletedFirstRun {
-                showWizard = true
-            }
+        .onChange(of: missingDependencyMessage) { _, _ in
+            resetDependencyWarningIfResolved()
         }
         .onReceive(NotificationCenter.default.publisher(for: .showAboutWindow)) { _ in
             openWindow(id: "about")
@@ -106,5 +114,11 @@ struct ContentView: View {
 
     private func selectDefault() {
         selection = store.profiles.first(where: { $0.online })?.id ?? store.profiles.first?.id
+    }
+
+    private func resetDependencyWarningIfResolved() {
+        if missingDependencyMessage == nil {
+            dismissedDepWarning = false
+        }
     }
 }

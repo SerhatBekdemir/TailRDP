@@ -7,6 +7,7 @@ struct TailRDPApp: App {
     @StateObject private var launcher = RDPLauncher()
 
     init() {
+        AppLaunchOverrides.applyForQA()
         if CommandLine.arguments.contains("--verify-session") {
             let failures = SessionEndClassifier.runBuiltInChecks()
             exit(failures == 0 ? 0 : 1)
@@ -28,7 +29,7 @@ struct TailRDPApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("TailRDP") {
+        WindowGroup(AppIdentity.displayName) {
             ContentView()
                 .environmentObject(store)
                 .environmentObject(tailscale)
@@ -40,7 +41,7 @@ struct TailRDPApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .appInfo) {
-                Button("About TailRDP") {
+                Button("About \(AppIdentity.displayName)") {
                     NotificationCenter.default.post(name: .showAboutWindow, object: nil)
                 }
             }
@@ -56,7 +57,7 @@ struct TailRDPApp: App {
                 .environmentObject(store)
         }
 
-        Window("About TailRDP", id: "about") {
+        Window("About \(AppIdentity.displayName)", id: "about") {
             AboutView()
                 .environmentObject(tailscale)
                 .environmentObject(launcher)
