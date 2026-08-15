@@ -19,6 +19,10 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
     var sessionHealth: SessionHealth?
     /// Pause/crash banner — persists when switching hosts; cleared on logout or dismiss.
     var stickyBanner: HostStatusBanner?
+    /// Learned while the host was last seen directly on this LAN — the two things a
+    /// magic packet needs. Kept after the host goes offline; that is the whole point.
+    var wakeMAC: String?
+    var wakeLANAddress: String?
 
     var health: SessionHealth {
         get { sessionHealth ?? SessionHealth() }
@@ -80,7 +84,11 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
         case rdpUsername, sshUsername, rdpPort, settings, lastRemoteDir
         case launchCommandOverride
         case lastWorking, sessionHealth, stickyBanner
+        case wakeMAC, wakeLANAddress
     }
+
+    /// A magic packet can only be built once we have seen this host on the LAN.
+    var canWake: Bool { wakeMAC != nil && wakeLANAddress != nil }
 
     init(
         id: String, hostName: String, displayName: String, address: String, os: String,
@@ -88,7 +96,8 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
         settings: RDPSettings, lastRemoteDir: String,
         launchCommandOverride: String = "",
         lastWorking: LastWorkingSnapshot? = nil, sessionHealth: SessionHealth? = nil,
-        stickyBanner: HostStatusBanner? = nil
+        stickyBanner: HostStatusBanner? = nil,
+        wakeMAC: String? = nil, wakeLANAddress: String? = nil
     ) {
         self.id = id
         self.hostName = hostName
@@ -105,6 +114,8 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
         self.lastWorking = lastWorking
         self.sessionHealth = sessionHealth
         self.stickyBanner = stickyBanner
+        self.wakeMAC = wakeMAC
+        self.wakeLANAddress = wakeLANAddress
     }
 
     init(from decoder: Decoder) throws {
@@ -126,6 +137,10 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
         lastWorking = try c.decodeIfPresent(LastWorkingSnapshot.self, forKey: .lastWorking)
         sessionHealth = try c.decodeIfPresent(SessionHealth.self, forKey: .sessionHealth)
         stickyBanner = try c.decodeIfPresent(HostStatusBanner.self, forKey: .stickyBanner)
+        wakeMAC = try c.decodeIfPresent(String.self, forKey: .wakeMAC)
+            .flatMap { WakeOnLAN.normalized(mac: $0) }
+        wakeLANAddress = try c.decodeIfPresent(String.self, forKey: .wakeLANAddress)
+            .flatMap { WakeOnLAN.isPrivateIPv4($0) ? $0 : nil }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -145,6 +160,8 @@ struct HostProfile: Codable, Identifiable, Equatable, Sendable {
         try c.encodeIfPresent(lastWorking, forKey: .lastWorking)
         try c.encodeIfPresent(sessionHealth, forKey: .sessionHealth)
         try c.encodeIfPresent(stickyBanner, forKey: .stickyBanner)
+        try c.encodeIfPresent(wakeMAC, forKey: .wakeMAC)
+        try c.encodeIfPresent(wakeLANAddress, forKey: .wakeLANAddress)
     }
 
     static func make(from peer: TailscalePeer) -> HostProfile {

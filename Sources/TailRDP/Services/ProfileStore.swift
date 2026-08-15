@@ -245,6 +245,14 @@ final class ProfileStore: ObservableObject {
                     profiles[i].os = os.rawValue
                     dirty = true
                 }
+                // Only ever learned, never cleared: a host that dropped off the LAN is
+                // exactly the one whose MAC we still need.
+                if let mac = peer.wakeMAC, let lan = peer.lanAddress,
+                   profiles[i].wakeMAC != mac || profiles[i].wakeLANAddress != lan {
+                    profiles[i].wakeMAC = mac
+                    profiles[i].wakeLANAddress = lan
+                    dirty = true
+                }
             } else if peer.isRDPCandidate {
                 profiles.append(HostProfile.make(from: peer))
                 dirty = true

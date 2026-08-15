@@ -60,8 +60,9 @@ final class TailscaleService: ObservableObject {
         let generation = refreshGeneration
         Task.detached(priority: .userInitiated) {
             let res = ProcessRunner.run(bin, ["status", "--json"])
-            let parsed = Self.parse(res.stdout)
+            var parsed = Self.parse(res.stdout)
             if parsed != nil {
+                parsed!.peers = Self.withLearnedMACs(parsed!.peers)
                 AppLog.tailscale.info("Refreshed \(parsed!.peers.count) peer(s)")
             } else {
                 AppLog.tailscale.error("tailscale status failed: \(AppLog.stderrTail(res.stderr), privacy: .public)")
@@ -111,6 +112,34 @@ final class TailscaleService: ObservableObject {
         }
     }
 
+    /// Fill in the MAC for every peer we can currently see on this LAN, so a host that
+    /// later goes to sleep can still be woken. One `arp` pass for all peers, skipped
+    /// entirely when nothing is reachable directly. Blocking: call off the main thread.
+    ///
+    /// CurAddr is the endpoint we send to, not proof of the peer's own address: with both
+    /// machines behind one NAT, tailscale can report the router's hairpin endpoint, whose
+    /// MAC would swallow every magic packet. A learned pair is never cleared, so refusing
+    /// to learn beats learning a lie.
+    nonisolated static func withLearnedMACs(_ peers: [TailscalePeer]) -> [TailscalePeer] {
+        guard peers.contains(where: { $0.lanAddress != nil }) else { return peers }
+        guard let gateway = WakeOnLAN.defaultGatewayIPv4() else {
+            AppLog.tailscale.error("No default gateway — skipping wake MAC learning")
+            return peers
+        }
+        let table = WakeOnLAN.arpTable()
+        return peers.map { peer in
+            guard let lan = peer.lanAddress, lan != gateway else {
+                var cleared = peer
+                cleared.lanAddress = nil
+                return cleared
+            }
+            guard let mac = table[lan] else { return peer }
+            var updated = peer
+            updated.wakeMAC = mac
+            return updated
+        }
+    }
+
     nonisolated static func parse(
         _ json: String
     ) -> (backendState: String, selfPeer: TailscalePeer?, peers: [TailscalePeer])? {
@@ -131,7 +160,8 @@ final class TailscaleService: ObservableObject {
                 os: (d["OS"] as? String ?? "").lowercased(),
                 ipv4: ipv4,
                 online: tunnelUp && (d["Online"] as? Bool ?? false),
-                isSelf: isSelf
+                isSelf: isSelf,
+                lanAddress: (d["CurAddr"] as? String).flatMap { WakeOnLAN.lanAddress(fromCurAddr: $0) }
             )
         }
 
