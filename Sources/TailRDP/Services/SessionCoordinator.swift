@@ -18,6 +18,12 @@ enum SessionCoordinator {
         var statusParts: [String] = []
         let useFallback = base.usesSafeFallback
 
+        // A host that is powered off answers neither SSH nor RDP, so waking comes before
+        // healing and before the settle wait below.
+        if !base.online, base.canWake, let woke = await wakeHost(profile: base, store: store) {
+            statusParts.append(woke)
+        }
+
         let isLinuxResume = base.isLinux
             && (resumingPaused || base.health.lastEndKind == .paused || base.stickyBanner?.style == .paused)
 
@@ -247,7 +253,36 @@ enum SessionCoordinator {
         return ("Marked disconnected.", false)
     }
 
+    /// How long to wait for a woken host to appear on the tailnet.
+    static let wakeTimeout: TimeInterval = 90
+    /// Breathing room after the tunnel comes up, before dialing RDP.
+    static let wakeGrace: Duration = .seconds(5)
+
     // MARK: - Private
+
+    /// Send a magic packet to an offline host and wait for the tailnet to see it.
+    /// Returns a status fragment, or nil when no packet could be sent.
+    ///
+    /// A timeout does not abort the connect: TailRDP has always let you dial a host that
+    /// looks offline using its saved address, and discovery can lag a host already up.
+    private static func wakeHost(profile: HostProfile, store: ProfileStore) async -> String? {
+        guard WakeOnLAN.wake(profile: profile) else { return nil }
+        store.setFlashBanner(
+            profileID: profile.id,
+            banner: HostFlashBanner(text: "Waking \(profile.displayName)…", style: .paused)
+        )
+        guard await WakeOnLAN.waitForPeerOnline(peerID: profile.id, timeout: wakeTimeout) else {
+            AppLog.session.info("Wake timed out for \(profile.id, privacy: .public)")
+            return "Sent a wake signal, but the host has not come back yet"
+        }
+        store.update(id: profile.id) { $0.online = true }
+        // ponytail: fixed grace, not a readiness probe — tailscaled can beat the RDP
+        // server to the network on a cold boot. Upgrade path: poll TCP address:rdpPort
+        // until it accepts, and keep this as the floor.
+        try? await Task.sleep(for: wakeGrace)
+        AppLog.session.info("Woke \(profile.id, privacy: .public)")
+        return "Woke \(profile.displayName)"
+    }
 
     private struct PausedResolution: Equatable {
         var kind: SessionEndKind

@@ -866,3 +866,99 @@ final class FileTransferPathTests: XCTestCase {
         )
     }
 }
+
+final class WakeOnLANTests: XCTestCase {
+    private let mac = "74:56:3c:68:55:b4"
+
+    func testMagicPacketIsSyncStreamPlusSixteenRepeats() {
+        guard let packet = WakeOnLAN.magicPacket(mac: mac) else {
+            return XCTFail("valid MAC produced no packet")
+        }
+        XCTAssertEqual(packet.count, 102)
+        XCTAssertEqual(Array(packet.prefix(6)), Array(repeating: 0xFF, count: 6))
+        let expected = Data([0x74, 0x56, 0x3c, 0x68, 0x55, 0xb4])
+        for repeatIndex in 0..<16 {
+            let start = 6 + repeatIndex * 6
+            XCTAssertEqual(packet[start..<(start + 6)], expected, "repeat \(repeatIndex)")
+        }
+    }
+
+    func testRejectsMalformedMACs() {
+        XCTAssertNil(WakeOnLAN.magicPacket(mac: "74:56:3c:68:55"))
+        XCTAssertNil(WakeOnLAN.magicPacket(mac: "74-56-3c-68-55-b4"))
+        XCTAssertNil(WakeOnLAN.magicPacket(mac: "zz:56:3c:68:55:b4"))
+        XCTAssertNil(WakeOnLAN.magicPacket(mac: ""))
+    }
+
+    /// macOS `arp` prints octets unpadded, so the parser must pad them back.
+    func testARPTableParsesUnpaddedOctets() {
+        let line = "? (192.168.1.250) at da:8:94:66:ef:5a on en0 ifscope [ethernet]"
+        XCTAssertEqual(WakeOnLAN.normalized(mac: "da:8:94:66:ef:5a"), "da:08:94:66:ef:5a")
+        XCTAssertNotNil(line.range(of: "([0-9a-fA-F]{1,2}:){5}[0-9a-fA-F]{1,2}", options: .regularExpression))
+    }
+
+    func testBroadcastAddressUsesSubnet() {
+        XCTAssertEqual(WakeOnLAN.broadcastAddress(forLAN: "192.168.1.73"), "192.168.1.255")
+        XCTAssertNil(WakeOnLAN.broadcastAddress(forLAN: "192.168.1"))
+        XCTAssertNil(WakeOnLAN.broadcastAddress(forLAN: "not.an.ip.here"))
+    }
+
+    /// Broadcasting to a WAN endpoint's subnet would spray a stranger's network.
+    func testOnlyPrivateEndpointsBecomeWakeTargets() {
+        XCTAssertEqual(WakeOnLAN.lanAddress(fromCurAddr: "192.168.1.73:41641"), "192.168.1.73")
+        XCTAssertEqual(WakeOnLAN.lanAddress(fromCurAddr: "10.253.233.20:41641"), "10.253.233.20")
+        XCTAssertNil(WakeOnLAN.lanAddress(fromCurAddr: "84.46.93.12:41641"))
+        XCTAssertNil(WakeOnLAN.lanAddress(fromCurAddr: "172.32.0.5:41641"))
+        XCTAssertNil(WakeOnLAN.lanAddress(fromCurAddr: ""))
+    }
+
+    func testWakeNeedsBothMACAndLANAddress() {
+        var profile = HostProfile.make(from: TailscalePeer(
+            id: "host", hostName: "host", dnsName: "", os: "linux",
+            ipv4: "100.0.0.1", online: false, isSelf: false
+        ))
+        XCTAssertFalse(profile.canWake)
+        profile.wakeMAC = mac
+        XCTAssertFalse(profile.canWake, "a MAC with no LAN address has no broadcast target")
+        profile.wakeLANAddress = "192.168.1.73"
+        XCTAssertTrue(profile.canWake)
+    }
+
+    func testLearnedMACSurvivesAProfileRoundTrip() throws {
+        var profile = HostProfile.make(from: TailscalePeer(
+            id: "host", hostName: "host", dnsName: "", os: "linux",
+            ipv4: "100.0.0.1", online: false, isSelf: false
+        ))
+        profile.wakeMAC = mac
+        profile.wakeLANAddress = "192.168.1.73"
+        let decoded = try JSONDecoder().decode(
+            HostProfile.self, from: JSONEncoder().encode(profile)
+        )
+        XCTAssertEqual(decoded.wakeMAC, mac)
+        XCTAssertEqual(decoded.wakeLANAddress, "192.168.1.73")
+    }
+
+    /// The bug this guards: CurAddr was the router's hairpin endpoint, so the learned MAC
+    /// was the gateway's and the magic packet went nowhere.
+    func testGatewayIsParsedFromRouteOutput() {
+        let out = """
+           route to: default
+        destination: default
+               mask: default
+            gateway: 192.168.1.1
+          interface: en0
+        """
+        XCTAssertEqual(WakeOnLAN.gatewayIPv4(fromRouteOutput: out), "192.168.1.1")
+        XCTAssertNil(WakeOnLAN.gatewayIPv4(fromRouteOutput: "route: writing to routing socket: not in table"))
+    }
+
+    func testDiscoveryPullsLANEndpointFromCurAddr() {
+        let json = """
+        {"BackendState":"Running","Self":{"HostName":"mac","TailscaleIPs":["100.0.0.9"],"OS":"macOS"},
+         "Peer":{"k":{"HostName":"box","TailscaleIPs":["100.0.0.1"],"OS":"linux","Online":true,
+         "CurAddr":"192.168.1.73:41641"}}}
+        """
+        let peer = TailscaleService.parse(json)?.peers.first
+        XCTAssertEqual(peer?.lanAddress, "192.168.1.73")
+    }
+}
