@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 
 APP_BASE="TailRDP"
 BUNDLE_ID="app.tailrdp"
-VERSION="${TAILRDP_VERSION:-1.0.2}"
+VERSION="${TAILRDP_VERSION:-1.0.3}"
 APP="${APP_BASE}-${VERSION}"
 CONFIG="${1:-release}"
 INSTALL="${INSTALL:-0}"

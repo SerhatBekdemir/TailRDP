@@ -28,7 +28,7 @@ Example local run:
 mkdir -p /tmp/tailrdp-qa
 cp Tests/TailRDPTests/Fixtures/sanitized-production-profiles.json /tmp/tailrdp-qa/profiles.json
 TAILRDP_DATA_DIR=/tmp/tailrdp-qa TAILRDP_DISABLE_REMOTE_IO=1 \
-  dist/TailRDP-1.0.2.app/Contents/MacOS/TailRDP-1.0.2 \
+  dist/TailRDP-1.0.3.app/Contents/MacOS/TailRDP-1.0.3 \
   -hasCompletedFirstRun YES -showOffline YES
 ```
 

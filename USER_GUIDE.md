@@ -44,7 +44,7 @@ TailRDP is a thin wrapper: it launches `tailscale`, `sdl-freerdp`, and optionall
 ```sh
 git clone <your-repo> TailRDP && cd TailRDP
 ./build.sh
-# Distributable app is at dist/TailRDP-1.0.2.app; installed app is in /Applications
+# Distributable app is at dist/TailRDP-1.0.3.app; installed app is in /Applications
 INSTALL=1 ./build.sh   # copies to /Applications
 ```
 
@@ -52,7 +52,7 @@ INSTALL=1 ./build.sh   # copies to /Applications
 
 TailRDP is ad-hoc signed, not notarized. On first open:
 
-1. Finder → right-click `dist/TailRDP-1.0.2.app` → **Open**, confirm **Open** in the dialog, **or**
+1. Finder → right-click `dist/TailRDP-1.0.3.app` → **Open**, confirm **Open** in the dialog, **or**
 2. System Settings → Privacy & Security → allow TailRDP
 
 ---
