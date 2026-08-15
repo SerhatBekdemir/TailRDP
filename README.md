@@ -34,13 +34,13 @@ TailRDP does **not** bundle Tailscale or FreeRDP.
 ### Build and run
 
 ```sh
-./build.sh                    # release build → dist/TailRDP-1.0.2.app
+./build.sh                    # release build → dist/TailRDP-1.0.3.app
 INSTALL=1 ./build.sh          # also install to /Applications
 swift run TailRDP               # debug run from source
 swift run TailRDP --verify-session   # session logic smoke test (no UI)
 ```
 
-**First launch:** unsigned builds require Finder → right-click `dist/TailRDP-1.0.2.app` → **Open** once.
+**First launch:** unsigned builds require Finder → right-click `dist/TailRDP-1.0.3.app` → **Open** once.
 
 **Release versioning:** small/minor changes use the patch increment (for example `1.0.1`), medium changes use the middle increment (`1.1.0`), and major changes use the first increment (`2.0.0`). Set `TAILRDP_VERSION=...` to override the current release version for a build. Set `TAILRDP_ICON_PATH=Resources/AppIcon-QA.icns` when producing a white-icon QA copy.
 

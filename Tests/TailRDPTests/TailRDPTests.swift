@@ -938,6 +938,41 @@ final class WakeOnLANTests: XCTestCase {
         XCTAssertEqual(decoded.wakeLANAddress, "192.168.1.73")
     }
 
+    /// The cached `online` flag went stale when a host died between refreshes, so Connect
+    /// skipped the wake and dialed a powered-off box. The probe is the ground truth now.
+    func testTCPProbeSeesAListenerAndItsAbsence() throws {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        defer { close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0                       // ephemeral
+        XCTAssertEqual(inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr), 1)
+        let bound = withUnsafePointer(to: &addr) { p in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        XCTAssertEqual(bound, 0)
+        XCTAssertEqual(listen(fd, 1), 0)
+
+        var live = sockaddr_in()
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &live) { p in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) }
+        }
+        XCTAssertEqual(named, 0)
+        let port = Int(live.sin_port.bigEndian)
+
+        XCTAssertTrue(WakeOnLAN.acceptsTCP(host: "127.0.0.1", port: port, timeout: 2))
+        close(fd)
+        XCTAssertFalse(WakeOnLAN.acceptsTCP(host: "127.0.0.1", port: port, timeout: 2))
+        XCTAssertFalse(
+            WakeOnLAN.acceptsTCP(host: "192.0.2.1", port: 3389, timeout: 1),
+            "TEST-NET-1 blackholes, so this must time out rather than report reachable"
+        )
+    }
+
     /// The bug this guards: CurAddr was the router's hairpin endpoint, so the learned MAC
     /// was the gateway's and the magic packet went nowhere.
     func testGatewayIsParsedFromRouteOutput() {

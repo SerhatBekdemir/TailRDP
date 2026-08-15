@@ -2,7 +2,7 @@ import Foundation
 
 enum AppIdentity {
     static let baseName = "TailRDP"
-    static let fallbackVersion = "1.0.2"
+    static let fallbackVersion = "1.0.3"
 
     static var version: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? fallbackVersion

@@ -19,8 +19,10 @@ enum SessionCoordinator {
         let useFallback = base.usesSafeFallback
 
         // A host that is powered off answers neither SSH nor RDP, so waking comes before
-        // healing and before the settle wait below.
-        if !base.online, base.canWake, let woke = await wakeHost(profile: base, store: store) {
+        // healing and before the settle wait below. The probe, not `online`, decides:
+        // that flag is a cached discovery result and a host can die between refreshes.
+        if base.canWake, await !WakeOnLAN.rdpIsUp(profile: base),
+           let woke = await wakeHost(profile: base, store: store) {
             statusParts.append(woke)
         }
 
@@ -257,6 +259,8 @@ enum SessionCoordinator {
     static let wakeTimeout: TimeInterval = 90
     /// Breathing room after the tunnel comes up, before dialing RDP.
     static let wakeGrace: Duration = .seconds(5)
+    /// How long to wait for the RDP port after that.
+    static let rdpReadyTimeout: TimeInterval = 30
 
     // MARK: - Private
 
@@ -276,10 +280,11 @@ enum SessionCoordinator {
             return "Sent a wake signal, but the host has not come back yet"
         }
         store.update(id: profile.id) { $0.online = true }
-        // ponytail: fixed grace, not a readiness probe — tailscaled can beat the RDP
-        // server to the network on a cold boot. Upgrade path: poll TCP address:rdpPort
-        // until it accepts, and keep this as the floor.
+        // tailscaled beats the RDP server to the network on a cold boot, so wait for the
+        // port itself. The floor stays: a server that accepts instantly still needs a
+        // moment before it will negotiate.
         try? await Task.sleep(for: wakeGrace)
+        _ = await WakeOnLAN.waitForRDP(profile: profile, timeout: rdpReadyTimeout)
         AppLog.session.info("Woke \(profile.id, privacy: .public)")
         return "Woke \(profile.displayName)"
     }

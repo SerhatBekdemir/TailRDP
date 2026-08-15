@@ -145,6 +145,62 @@ enum WakeOnLAN {
         return ip
     }
 
+    // MARK: - Reachability
+
+    /// Does anything accept TCP on `host:port` right now? Ground truth, unlike a cached
+    /// online flag or tailscale's own `Online`, which lagged a real power-off by up to
+    /// 150s in testing. Blocking for at most `timeout`: call off the main thread.
+    static func acceptsTCP(host: String, port: Int, timeout: TimeInterval) -> Bool {
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = UInt16(truncatingIfNeeded: port).bigEndian
+        guard inet_pton(AF_INET, host, &addr.sin_addr) == 1 else { return false }
+
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        let flags = fcntl(fd, F_GETFL, 0)
+        guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else { return false }
+
+        let rc = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                connect(fd, sa, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        if rc == 0 { return true }
+        guard errno == EINPROGRESS else { return false }
+
+        var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        guard poll(&pfd, 1, Int32(timeout * 1000)) == 1 else { return false }
+        var sockErr: Int32 = 0
+        var len = socklen_t(MemoryLayout<Int32>.size)
+        guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &sockErr, &len) == 0 else { return false }
+        return sockErr == 0
+    }
+
+    /// Can this host take an RDP session right now?
+    static func rdpIsUp(profile: HostProfile, timeout: TimeInterval = 1.5) async -> Bool {
+        let address = profile.address
+        let port = profile.rdpPort
+        guard !address.isEmpty else { return false }
+        return await Task.detached(priority: .userInitiated) {
+            acceptsTCP(host: address, port: port, timeout: timeout)
+        }.value
+    }
+
+    /// Poll the RDP port until it accepts, or the timeout expires. Returns false on
+    /// timeout — the caller dials anyway, since a slow server beats a refused connect.
+    static func waitForRDP(profile: HostProfile, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await rdpIsUp(profile: profile) { return true }
+            if Task.isCancelled { return false }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        return false
+    }
+
     // MARK: - Wait
 
     /// Poll `tailscale status` until the peer reports online, or the timeout expires.

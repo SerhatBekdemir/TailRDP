@@ -28,7 +28,7 @@ Run the app:
 ```sh
 swift run TailRDP
 # or
-./build.sh && open dist/TailRDP-1.0.2.app
+./build.sh && open dist/TailRDP-1.0.3.app
 ```
 
 Install to Applications:
@@ -53,7 +53,7 @@ See [HANDOVER.md](HANDOVER.md) for architecture and module map.
 |---------|--------|
 | `swift build` | Debug binary in `.build/` |
 | `swift build -c release` | Release binary |
-| `./build.sh` | Release arm64 `dist/TailRDP-1.0.2.app` + verify gate |
+| `./build.sh` | Release arm64 `dist/TailRDP-1.0.3.app` + verify gate |
 | `INSTALL=1 ./build.sh` | Above + copy to `/Applications` |
 
 `build.sh` always runs `--verify-session` before packaging. Build artifacts (`.build/`, `*.app/`, `dist/`) are gitignored.

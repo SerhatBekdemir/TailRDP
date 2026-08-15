@@ -1,8 +1,16 @@
 # Changelog
 
-All notable changes to TailRDP. Version **1.0.2** matches `build.sh` / Info.plist.
+All notable changes to TailRDP. Version **1.0.3** matches `build.sh` / Info.plist.
 
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
+
+---
+
+## [1.0.3] — 2026-08-15
+
+- Wake a powered-off host with a Wake-on-LAN magic packet when you press Connect, then wait for it to return to the tailnet before dialing RDP. A timeout reports and still lets the connect proceed.
+- Learn each host's MAC and LAN address from this Mac's ARP table while the host is seen directly on the network, and keep them after it goes offline. Endpoints that resolve to the default gateway are rejected — behind one NAT, Tailscale can report the router's hairpin address, and the packet would go nowhere.
+- Decide whether to wake by probing the RDP port, not by the cached online flag, which goes stale when a host dies between discovery refreshes. After a wake, wait for that port to accept before dialing instead of a blind delay.
 
 ---
 
@@ -107,6 +115,7 @@ Distribution-ready personal tailnet RDP client (`app.tailrdp`).
 See `git log --oneline` for full history.
 
 [Unreleased]: compare with latest tag when releases begin
+[1.0.3]: Wake-on-LAN on connect
 [1.0.2]: tailnet state reporting and Linux handover settle wait
 [1.0.1]: versioned Matrix-green icon release
 [1.0.0]: initial distributable milestone
